@@ -4,6 +4,7 @@ pub mod bridge;
 pub mod client_config;
 pub mod client_control;
 pub mod exit;
+pub mod kestrel;
 pub mod manager_control;
 pub mod tunnel_command;
 

@@ -64,6 +64,12 @@ async fn open_tunnel(
     let dest_addrs = dns_resolve(&dest_host, filter)
         .await
         .context("failed to resolve DNS")?;
+    if let Some(addr) = dest_addrs
+        .iter()
+        .find(|addr| crate::kestrel::port_blocked(addr.port()))
+    {
+        anyhow::bail!("Proxying to port {} is not allowed", addr.port());
+    }
     if !dest_addrs
         .iter()
         .all(|addr| proxy_allowed(*addr, is_free, &protocol))

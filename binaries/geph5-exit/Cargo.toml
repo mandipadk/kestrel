@@ -47,7 +47,7 @@ geph5-misc-rpc = { path = "../../libraries/geph5-misc-rpc" }
 stdcode = "0.1.14"
 x25519-dalek = { version = "2", default-features = false, features = ["serde"] }
 hex = "0.4.3"
-moka = { version = "0.12.16", features = ["future"] }
+moka = { version = "0.12.16", features = ["future", "sync"] }
 mizaru2 = { path = "../../libraries/mizaru2" }
 governor = "0.6.3"
 quanta = "0.12.6"

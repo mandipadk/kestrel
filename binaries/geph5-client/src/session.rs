@@ -493,7 +493,12 @@ async fn client_auth(
         tracing::info!(level = debug(level), "authentication with a connect token");
         (level, token, sig).stdcode().into()
     };
-    match pipe.shared_secret().map(|s| s.to_owned()) {
+    // Kestrel devices always use full end-to-end authentication.
+    let shared_secret = pipe
+        .shared_secret()
+        .filter(|_| ctx.init().kestrel_device.is_none())
+        .map(|s| s.to_owned());
+    match shared_secret {
         Some(ss) => {
             tracing::debug!(server, "using shared secret for authentication");
             let challenge = rand::random();
@@ -522,9 +527,18 @@ async fn client_auth(
         None => {
             tracing::debug!(server, "requiring full authentication");
             let my_esk = x25519_dalek::EphemeralSecret::random_from_rng(rand_core::OsRng);
+            let crypt_hello = ClientCryptHello::X25519((&my_esk).into());
+            let credentials = match &ctx.init().kestrel_device {
+                Some(device) if ctx.init().broker.is_none() => {
+                    geph5_misc_rpc::kestrel::DeviceCredential::sign(device, &crypt_hello)?
+                        .stdcode()
+                        .into()
+                }
+                _ => credentials,
+            };
             let client_hello = ClientHello {
                 credentials,
-                crypt_hello: ClientCryptHello::X25519((&my_esk).into()),
+                crypt_hello,
             };
             write_prepend_length(&client_hello.stdcode(), &mut pipe).await?;
             tracing::trace!(server, "wrote client hello");
