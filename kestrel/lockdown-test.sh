@@ -124,6 +124,11 @@ EOF
   fi
 fi
 
+if [[ ! -s "$WORK/probe.yaml" ]] || ! grep -q kestrel_device "$WORK/probe.yaml"; then
+  bad "could not prepare the probe device config"
+  exit 1
+fi
+
 # 1. an enrolled device gets through
 P=$(start_client probe "$WORK/probe.yaml")
 expect_works "enrolled device connects" "$P"
