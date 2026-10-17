@@ -30,6 +30,7 @@ targets:
           UIColorName: LaunchBackground
         UIUserInterfaceStyle: Dark
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIRequiresFullScreen: true
         NSCameraUsageDescription: Scan the setup code shown on your Kestrel page.
         UIAppFonts: [Geist.ttf, GeistMono.ttf]
         ITSAppUsesNonExemptEncryption: false
