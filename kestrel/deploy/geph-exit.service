@@ -1,0 +1,37 @@
+[Unit]
+Description=Kestrel private VPN exit (our Geph5 fork)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+User=kestrel
+Group=kestrel
+ExecStartPre=+/usr/local/sbin/kestrel-firewall apply
+ExecStart=/opt/kestrel/current/geph5-exit --config /etc/kestrel/exit.yaml
+Environment=RUST_LOG=geph5_exit=info
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/kestrel
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

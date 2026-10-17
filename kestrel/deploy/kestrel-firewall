@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Kestrel host firewall. Run as root.
+#   kestrel-firewall apply   install the rules (idempotent; runs before geph-exit starts)
+#   kestrel-firewall check   exit 0 only if every rule is in place
+#
+# Inbound: Oracle's default policy already rejects everything but SSH; this adds
+# only the exit's TCP port, with per-source connection rate and count limits.
+# Outbound for the exit's user: no mail ports, no private, link-local or cloud
+# metadata addresses.
+set -euo pipefail
+PORT=${KESTREL_PORT:-443}
+USER_NAME=kestrel
+IPT=iptables
+IP6T=ip6tables
+
+rules_in=(
+  "-p tcp --dport $PORT -m hashlimit --hashlimit-above 20/minute --hashlimit-burst 40 --hashlimit-mode srcip --hashlimit-name kestrel_new -j DROP"
+  "-p tcp --dport $PORT -m connlimit --connlimit-above 64 --connlimit-mask 32 -j REJECT --reject-with tcp-reset"
+  "-p tcp --dport $PORT -j ACCEPT"
+)
+rules_out=(
+  "-p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset"
+  "-d 10.0.0.0/8 -j REJECT"
+  "-d 172.16.0.0/12 -j REJECT"
+  "-d 192.168.0.0/16 -j REJECT"
+  "-d 100.64.0.0/10 -j REJECT"
+  "-d 169.254.0.0/16 -j REJECT"
+  "-d 224.0.0.0/4 -j REJECT"
+)
+
+apply() {
+  $IPT -N KESTREL-IN 2>/dev/null || $IPT -F KESTREL-IN
+  for r in "${rules_in[@]}"; do $IPT -A KESTREL-IN $r; done
+  $IPT -C INPUT -p tcp --dport "$PORT" -m conntrack --ctstate NEW -j KESTREL-IN 2>/dev/null \
+    || $IPT -I INPUT 1 -p tcp --dport "$PORT" -m conntrack --ctstate NEW -j KESTREL-IN
+
+  $IPT -N KESTREL-OUT 2>/dev/null || $IPT -F KESTREL-OUT
+  for r in "${rules_out[@]}"; do $IPT -A KESTREL-OUT $r; done
+  $IPT -C OUTPUT -m owner --uid-owner "$USER_NAME" -j KESTREL-OUT 2>/dev/null \
+    || $IPT -I OUTPUT 1 -m owner --uid-owner "$USER_NAME" -j KESTREL-OUT
+
+  # The exit does not serve IPv6; its port never answers there, and no mail over v6.
+  $IP6T -C INPUT -p tcp --dport "$PORT" -j REJECT 2>/dev/null \
+    || $IP6T -I INPUT 1 -p tcp --dport "$PORT" -j REJECT
+  $IP6T -C OUTPUT -m owner --uid-owner "$USER_NAME" -p tcp -m multiport --dports 25,465,587,2525 -j REJECT 2>/dev/null \
+    || $IP6T -I OUTPUT 1 -m owner --uid-owner "$USER_NAME" -p tcp -m multiport --dports 25,465,587,2525 -j REJECT
+  echo "kestrel firewall applied (port $PORT)"
+}
+
+check() {
+  local fail=0
+  $IPT -C INPUT -p tcp --dport "$PORT" -m conntrack --ctstate NEW -j KESTREL-IN 2>/dev/null || { echo "missing: INPUT jump"; fail=1; }
+  $IPT -C OUTPUT -m owner --uid-owner "$USER_NAME" -j KESTREL-OUT 2>/dev/null || { echo "missing: OUTPUT jump"; fail=1; }
+  for r in "${rules_in[@]}"; do $IPT -C KESTREL-IN $r 2>/dev/null || { echo "missing in: $r"; fail=1; }; done
+  for r in "${rules_out[@]}"; do $IPT -C KESTREL-OUT $r 2>/dev/null || { echo "missing out: $r"; fail=1; }; done
+  $IPT -C INPUT -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || { echo "missing: default inbound reject"; fail=1; }
+  $IP6T -C INPUT -p tcp --dport "$PORT" -j REJECT 2>/dev/null || { echo "missing: ipv6 reject"; fail=1; }
+  local listeners
+  listeners=$(ss -Htln | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127)' | grep -vE ":(22|111|$PORT)$" || true)
+  [[ -z "$listeners" ]] || echo "note: other public listeners (behind the default reject): $listeners"
+  if [[ $fail == 0 ]]; then echo "kestrel firewall: ok"; fi
+  return $fail
+}
+
+case "${1:-}" in
+  apply) apply ;;
+  check) check ;;
+  *) echo "usage: kestrel-firewall apply|check" >&2; exit 2 ;;
+esac

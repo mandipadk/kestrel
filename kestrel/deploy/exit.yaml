@@ -1,0 +1,12 @@
+# Kestrel private exit. No broker: only devices in kestrel_devices may connect.
+signing_secret: /var/lib/kestrel/signing.key
+c2e_listen: 0.0.0.0:443
+b2e_listen: 127.0.0.1:28443
+country: DE
+city: Frankfurt
+kestrel_devices: /var/lib/kestrel/devices.json
+kestrel_status: /var/lib/kestrel/status.json
+# per-device speed limit, KiB/s (about 200 Mbit/s)
+device_ratelimit: 25000
+blocked_ports: [25, 465, 587, 2525]
+free_ratelimit: 0
