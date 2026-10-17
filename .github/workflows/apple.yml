@@ -1,0 +1,117 @@
+# Builds Kestrel's Apple clients on GitHub's macOS runners:
+#   - the Mac command-line client (universal binary), as a workflow artifact
+#   - the iPhone app, signed with the App Store Connect API key and sent to TestFlight
+name: apple
+
+on:
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: Upload the iPhone build to TestFlight
+        type: boolean
+        default: true
+  push:
+    branches: [kestrel]
+    paths:
+      - apps/**
+      - binaries/geph5-client/**
+      - libraries/geph5-misc-rpc/**
+      - .github/workflows/apple.yml
+
+concurrency:
+  group: apple
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mac
+      - name: Build
+        run: |
+          cargo build --release -p geph5-client --bin geph5-client --target aarch64-apple-darwin
+          cargo build --release -p geph5-client --bin geph5-client --target x86_64-apple-darwin
+          mkdir -p out
+          lipo -create -output out/kestrel-client \
+            target/aarch64-apple-darwin/release/geph5-client \
+            target/x86_64-apple-darwin/release/geph5-client
+          lipo -info out/kestrel-client
+          out/kestrel-client --help | head -5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kestrel-client-macos
+          path: out/kestrel-client
+          retention-days: 30
+
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      DEVELOPMENT_TEAM: UK74VYMUP7
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust target
+        run: rustup target add aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios
+      - name: Build the engine
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        run: cargo build --release -p geph5-client --lib --target aarch64-apple-ios
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd apps/ios && xcodegen generate
+      - name: API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cd apps/ios
+          xcodebuild -project Kestrel.xcodeproj -scheme Kestrel -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Kestrel.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM CURRENT_PROJECT_VERSION=$BUILD_NUMBER \
+            archive | xcbeautify || exit ${PIPESTATUS[0]}
+      - name: Upload to TestFlight
+        if: github.event_name == 'push' || inputs.testflight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$DEVELOPMENT_TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/Kestrel.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+      - name: Clean up the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

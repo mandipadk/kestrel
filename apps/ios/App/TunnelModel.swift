@@ -1,0 +1,168 @@
+import Foundation
+import NetworkExtension
+
+/// A device identity as carried by the setup QR code on the Kestrel page:
+/// `kestrel1:` + base64url(JSON {n: name, s: secret, e: endpoint, k: exit key}).
+struct DeviceKey: Codable, Equatable {
+    let n: String
+    let s: String
+    let e: String
+    let k: String
+
+    var name: String { n }
+    var endpoint: String { e }
+
+    static func parse(_ text: String) -> DeviceKey? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("kestrel1:") else { return nil }
+        var b64 = String(trimmed.dropFirst("kestrel1:".count))
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let key = try? JSONDecoder().decode(DeviceKey.self, from: data),
+              key.s.count == 64, key.k.count == 64, key.e.contains(":") else { return nil }
+        return key
+    }
+
+    /// The geph5-client config for this device: no broker, straight to our exit.
+    var clientConfig: String {
+        let cfg: [String: Any] = [
+            "exit_constraint": ["direct": "\(e)/\(k)"],
+            "allow_direct": false,
+            "broker": NSNull(),
+            "broker_keys": NSNull(),
+            "cache": NSNull(),
+            "spoof_dns": false,
+            "passthrough_china": false,
+            "allow_lan": false,
+            "kestrel_device": ["name": n, "secret": s],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: cfg)
+        return String(data: data, encoding: .utf8)!
+    }
+}
+
+@MainActor
+final class TunnelModel: ObservableObject {
+    @Published var loaded = false
+    @Published var device: DeviceKey?
+    @Published var status: NEVPNStatus = .invalid
+    @Published var connectedSince: Date?
+    @Published var publicIP: String?
+    @Published var onDemand = false
+    @Published var error: String?
+
+    private var manager: NETunnelProviderManager?
+    private var observer: NSObjectProtocol?
+
+    func load() async {
+        let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
+        manager = managers.first
+        if let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
+           let raw = proto.providerConfiguration?["key"] as? String {
+            device = DeviceKey.parse(raw)
+        }
+        onDemand = manager?.isOnDemandEnabled ?? false
+        observe()
+        refreshStatus()
+        loaded = true
+    }
+
+    private func observe() {
+        guard observer == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: .NEVPNStatusDidChange, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.refreshStatus() }
+        }
+    }
+
+    private func refreshStatus() {
+        let conn = manager?.connection
+        status = conn?.status ?? .invalid
+        connectedSince = status == .connected ? conn?.connectedDate : nil
+        if status == .connected {
+            Task { await checkAddress() }
+        } else {
+            publicIP = nil
+        }
+    }
+
+    /// Asks Cloudflare which address we appear from: the exit's, if all is well.
+    func checkAddress() async {
+        guard let url = URL(string: "https://1.1.1.1/cdn-cgi/trace") else { return }
+        for _ in 0..<3 {
+            if let (data, _) = try? await URLSession.shared.data(from: url),
+               let text = String(data: data, encoding: .utf8),
+               let line = text.split(separator: "\n").first(where: { $0.hasPrefix("ip=") }) {
+                publicIP = String(line.dropFirst(3))
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+    }
+
+    func install(_ key: DeviceKey, raw: String) async {
+        let m = manager ?? NETunnelProviderManager()
+        let proto = NETunnelProviderProtocol()
+        proto.providerBundleIdentifier = "dev.mandip.kestrel.tunnel"
+        proto.serverAddress = key.endpoint
+        proto.providerConfiguration = ["config": key.clientConfig, "key": raw]
+        proto.disconnectOnSleep = false
+        m.protocolConfiguration = proto
+        m.localizedDescription = "Kestrel"
+        m.isEnabled = true
+        do {
+            try await m.saveToPreferences()
+            try await m.loadFromPreferences()
+            manager = m
+            device = key
+            error = nil
+            observe()
+            refreshStatus()
+        } catch {
+            self.error = "iOS did not save the VPN: \(error.localizedDescription)"
+        }
+    }
+
+    func toggle() async {
+        guard let m = manager else { return }
+        error = nil
+        if status == .connected || status == .connecting || status == .reasserting {
+            if m.isOnDemandEnabled { await setOnDemand(false) }
+            m.connection.stopVPNTunnel()
+            return
+        }
+        do {
+            if !m.isEnabled {
+                m.isEnabled = true
+                try await m.saveToPreferences()
+                try await m.loadFromPreferences()
+            }
+            try m.connection.startVPNTunnel()
+        } catch {
+            self.error = "Could not connect: \(error.localizedDescription)"
+        }
+    }
+
+    func setOnDemand(_ on: Bool) async {
+        guard let m = manager else { return }
+        m.onDemandRules = on ? [NEOnDemandRuleConnect()] : []
+        m.isOnDemandEnabled = on
+        do {
+            try await m.saveToPreferences()
+            onDemand = on
+        } catch {
+            self.error = "Could not change that setting: \(error.localizedDescription)"
+        }
+    }
+
+    func forget() async {
+        guard let m = manager else { return }
+        m.connection.stopVPNTunnel()
+        try? await m.removeFromPreferences()
+        manager = nil
+        device = nil
+        onDemand = false
+        refreshStatus()
+    }
+}

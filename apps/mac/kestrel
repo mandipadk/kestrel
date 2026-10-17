@@ -1,0 +1,51 @@
+#!/bin/bash
+# kestrel on | off | status
+# Runs the Kestrel client in the background and points this Mac's network
+# proxies at it (SOCKS 127.0.0.1:9909, web 127.0.0.1:9910).
+set -uo pipefail
+AGENT="$HOME/Library/LaunchAgents/dev.mandip.kestrel.plist"
+DOMAIN="gui/$(id -u)"
+
+services() {
+  networksetup -listallnetworkservices | tail -n +2 | grep -v '^\*' | while read -r svc; do
+    [[ -n "$(networksetup -getinfo "$svc" 2>/dev/null | grep -E '^IP address: [0-9]')" ]] && echo "$svc"
+  done
+}
+
+through() { curl -s --max-time 8 --socks5-hostname 127.0.0.1:9909 https://1.1.1.1/cdn-cgi/trace | sed -n 's/^ip=//p'; }
+
+case "${1:-status}" in
+  on)
+    launchctl bootstrap "$DOMAIN" "$AGENT" 2>/dev/null || launchctl kickstart -k "$DOMAIN/dev.mandip.kestrel"
+    for i in $(seq 1 20); do ip=$(through); [[ -n "$ip" ]] && break; sleep 1; done
+    if [[ -z "${ip:-}" ]]; then
+      echo "Kestrel started but can't reach Frankfurt yet. Proxies left alone. Log: ~/.kestrel/client.log"
+      exit 1
+    fi
+    services | while read -r svc; do
+      networksetup -setsocksfirewallproxy "$svc" 127.0.0.1 9909
+      networksetup -setwebproxy "$svc" 127.0.0.1 9910
+      networksetup -setsecurewebproxy "$svc" 127.0.0.1 9910
+      networksetup -setproxybypassdomains "$svc" localhost 127.0.0.1 "*.local" 169.254/16 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+    done
+    echo "Kestrel is on. You appear as $ip (Frankfurt)."
+    ;;
+  off)
+    services | while read -r svc; do
+      networksetup -setsocksfirewallproxystate "$svc" off
+      networksetup -setwebproxystate "$svc" off
+      networksetup -setsecurewebproxystate "$svc" off
+    done
+    launchctl bootout "$DOMAIN/dev.mandip.kestrel" 2>/dev/null
+    echo "Kestrel is off."
+    ;;
+  status)
+    if launchctl print "$DOMAIN/dev.mandip.kestrel" >/dev/null 2>&1; then
+      ip=$(through)
+      [[ -n "$ip" ]] && echo "On. You appear as $ip." || echo "Running, but not connected yet. Log: ~/.kestrel/client.log"
+    else
+      echo "Off."
+    fi
+    ;;
+  *) echo "usage: kestrel on | off | status"; exit 2 ;;
+esac
