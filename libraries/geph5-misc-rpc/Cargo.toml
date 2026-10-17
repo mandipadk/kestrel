@@ -24,6 +24,8 @@ nanorpc-sillad = { version = "0.2.2", path = "../nanorpc-sillad" }
 geph5-rt = { version = "0.3.8", path = "../geph5-rt" }
 tokio = { version = "1.53", features = ["io-util"] }
 chacha20poly1305 = "0.10.1"
+hex = "0.4.3"
+getrandom = "0.2"
 smallvec = "1.15.2"
 tap = "1.0.1"
 pin-project = "1.1.13"

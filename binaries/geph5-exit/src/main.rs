@@ -1,6 +1,7 @@
 mod bw_accounting;
 mod dns;
 mod ipv6;
+mod kestrel;
 mod session;
 mod tasklimit;
 
@@ -129,6 +130,30 @@ struct ConfigFile {
     /// YouTube video ID probed by the Google-reachability selfcheck.
     #[serde(default = "default_google_selfcheck_video")]
     google_selfcheck_video: String,
+
+    /// Kestrel: device list for private mode. Required when there is no broker.
+    #[serde(default)]
+    kestrel_devices: Option<PathBuf>,
+
+    /// Kestrel: where to write per-device usage for the status page.
+    #[serde(default)]
+    kestrel_status: Option<PathBuf>,
+
+    /// Kestrel: per-device speed limit in KiB/s.
+    #[serde(default = "default_device_ratelimit")]
+    device_ratelimit: u32,
+
+    /// Kestrel: destination ports no client may reach.
+    #[serde(default = "default_blocked_ports")]
+    blocked_ports: Vec<u16>,
+}
+
+fn default_device_ratelimit() -> u32 {
+    25_000
+}
+
+fn default_blocked_ports() -> Vec<u16> {
+    vec![25, 465, 587, 2525]
 }
 
 fn default_google_selfcheck_video() -> String {
@@ -314,6 +339,11 @@ fn main() -> anyhow::Result<()> {
     let args = CliArgs::parse();
     let config: ConfigFile = serde_yaml::from_slice(&std::fs::read(args.config)?)?;
 
+    if config.broker.is_none() && config.kestrel_devices.is_none() {
+        anyhow::bail!(
+            "refusing to start: without a broker, kestrel_devices must be set (no open exits)"
+        );
+    }
     CONFIG_FILE.set(config).ok().unwrap();
 
     std::thread::spawn(instrumentation_report_loop);

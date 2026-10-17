@@ -57,6 +57,10 @@ pub struct Config {
     #[serde(default)]
     pub credentials: Credential,
 
+    /// Kestrel: this device's identity for a private, broker-less exit.
+    #[serde(default)]
+    pub kestrel_device: Option<crate::kestrel::KestrelDevice>,
+
     #[serde(default)]
     pub sess_metadata: serde_json::Value,
     pub task_limit: Option<u32>,
