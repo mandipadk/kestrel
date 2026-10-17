@@ -140,6 +140,8 @@ if systemctl is-active --quiet geph-exit && "$K/lockdown-test.sh" --live; then
     [[ "releases/$old" != "$(readlink $OPT/last-good)" ]] && rm -rf "$OPT/releases/$old"
   done
   if [[ $SHA == "$DEPLOYED" ]]; then msg="Redeployed $SHA."; else msg="Deployed $SHA (was $DEPLOYED), on upstream $(git rev-parse --short upstream/master)."; fi
+  # keep the private GitHub copy current; its push rebuilds the iPhone and Mac clients
+  git push -q --force-with-lease origin kestrel 2>&1 || echo "note: could not push to origin"
   report ok "$msg Tests and lockdown passed."
   echo "$msg"
 else
