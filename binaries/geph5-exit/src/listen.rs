@@ -26,10 +26,10 @@ use crate::{
     CONFIG_FILE, SIGNING_SECRET,
     auth::verify_user,
     broker::{ACCEPT_FREE, broker_loop},
-    bw_accounting::{BwAccount, bw_accounting_loop},
+    bw_accounting::bw_accounting_loop,
     ipv6::{EyeballDialer, configure_ipv6_routing, eyeball_addr_for_session},
     proxy::proxy_stream,
-    ratelimit::{RateLimiter, get_ratelimiter},
+    ratelimit::get_ratelimiter,
     session::SessionKey,
     tasklimit::new_task_until_death,
 };
@@ -39,6 +39,10 @@ pub async fn listen_main() -> anyhow::Result<()> {
     let c2e = c2e_loop();
     let b2e = b2e_loop();
     let broker = broker_loop();
+    if CONFIG_FILE.wait().broker.is_none() {
+        // Kestrel private mode: no bridges, no public self-checks.
+        return (c2e, crate::kestrel::status_loop()).race().await;
+    }
     let google_selfcheck = crate::google_selfcheck::google_selfcheck_loop();
     (c2e, broker, b2e, google_selfcheck).race().await
 }
@@ -55,6 +59,23 @@ async fn c2e_loop() -> anyhow::Result<()> {
             }
         };
 
+        if CONFIG_FILE.wait().broker.is_none() {
+            let remote_ip = c2e_raw
+                .remote_addr()
+                .and_then(|a| a.parse::<SocketAddr>().ok())
+                .map(|a| a.ip());
+            let Some(remote_ip) = remote_ip else { continue };
+            if crate::kestrel::is_banned(remote_ip) {
+                continue;
+            }
+            geph5_rt::spawn(async move {
+                if let Err(err) = handle_client(c2e_raw).await {
+                    tracing::debug!(err = debug(err), "private session ended");
+                }
+            })
+            .detach();
+            continue;
+        }
         let test_addr = async {
             let remote_addr: SocketAddr = c2e_raw.remote_addr().unwrap().parse()?;
             let (asn, country) = ip_to_asn_country(remote_addr.ip()).await?;
@@ -147,8 +168,45 @@ async fn b2e_loop() -> anyhow::Result<()> {
 }
 
 async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
+    let private = CONFIG_FILE.wait().broker.is_none();
+    let remote_ip = client
+        .remote_addr()
+        .and_then(|a| a.parse::<SocketAddr>().ok())
+        .map(|a| a.ip());
     // execute the authentication
-    let client_hello: ClientHello = stdcode::deserialize(&read_prepend_length(&mut client).await?)?;
+    let client_hello: ClientHello = if private {
+        // a silent or slow peer gets no more than a few seconds
+        match tokio::time::timeout(Duration::from_secs(10), read_prepend_length(&mut client)).await
+        {
+            Ok(Ok(raw)) => stdcode::deserialize(&raw)?,
+            _ => {
+                if let Some(ip) = remote_ip {
+                    crate::kestrel::record_failure(ip);
+                }
+                anyhow::bail!("no client hello in time")
+            }
+        }
+    } else {
+        stdcode::deserialize(&read_prepend_length(&mut client).await?)?
+    };
+    let device = if private {
+        match crate::kestrel::authorize(&client_hello) {
+            Ok(device) => Some(device),
+            Err(err) => {
+                tracing::warn!(
+                    ip = debug(remote_ip),
+                    err = display(&err),
+                    "rejected a connection without a valid device key"
+                );
+                if let Some(ip) = remote_ip {
+                    crate::kestrel::record_failure(ip);
+                }
+                return Err(err);
+            }
+        }
+    } else {
+        None
+    };
 
     let keys: Option<([u8; 32], [u8; 32])>;
     let exit_hello_inner: ExitHelloInner = match client_hello.crypt_hello {
@@ -170,7 +228,7 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     };
 
     let mut is_free = false;
-    let mut session_key = SessionKey::new(&client_hello);
+    let session_key;
 
     let ratelimit = if CONFIG_FILE.wait().broker.is_some() {
         let (level, token, sig): (AccountLevel, ClientToken, UnblindedSignature) =
@@ -185,8 +243,12 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
         is_free = level == AccountLevel::Free;
         session_key = SessionKey::new(&(level, token));
         get_ratelimiter(level, token, session_key).await
+    } else if let Some(device) = &device {
+        session_key = SessionKey::new(&("kestrel", &device.name));
+        tracing::info!(device = display(&device.name), "device connected");
+        crate::kestrel::device_ratelimiter(device, session_key).await
     } else {
-        RateLimiter::unlimited(BwAccount::unlimited(), None)
+        anyhow::bail!("no broker and no device: refusing")
     };
 
     let exit_hello = ExitHello {
@@ -195,6 +257,10 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     };
     write_prepend_length(&exit_hello.stdcode(), &mut client).await?;
 
+    let client = match &device {
+        Some(device) => EitherPipe::Left(crate::kestrel::UsagePipe::new(client, device)),
+        None => EitherPipe::Right(client),
+    };
     let client = if let Some((read_key, write_key)) = keys {
         EitherPipe::Left(ClientExitCryptPipe::new(client, read_key, write_key))
     } else {
