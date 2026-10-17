@@ -1,0 +1,15 @@
+[Unit]
+Description=Kestrel: rebase on upstream Geph, rebuild, test, deploy or roll back
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+SupplementaryGroups=kestrel
+WorkingDirectory=/home/ubuntu/code/kestrel
+Environment=PATH=/home/ubuntu/.cargo/bin:/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/code/kestrel/kestrel/sync.sh
+TimeoutStartSec=3h
+Nice=10

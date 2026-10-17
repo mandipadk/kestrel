@@ -1,0 +1,2 @@
+# Kestrel pipelines (run as ubuntu) may restart the exit and check the firewall, nothing else.
+ubuntu ALL=(root) NOPASSWD: /usr/bin/systemctl restart geph-exit, /usr/local/sbin/kestrel-firewall check
