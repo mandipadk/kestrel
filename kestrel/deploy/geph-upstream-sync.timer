@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Kestrel upstream sync
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
