@@ -21,3 +21,16 @@
 - [ ] Remaining advisories needing manual bumps: sqlx 0.7 -> 0.8 (major), rsa (no fix, Marvin), rustls 0.21 line via an old dep
 - [ ] Firewall: exempt lo from the per-source hashlimit (next root change)
 - [ ] Mac: a signed/notarized installer would remove the one Terminal step
+
+## Round 2 (2026-10-18): Mac app + big VPN features
+
+Picked (research notes in kestrel/README.md "What Kestrel adds"):
+- [ ] Shield: the exit blocks ads, trackers and malware for each device (oisd lists, refreshed daily), answers blocked lookups at once, counts per device (today, top domains); on/off per device
+- [ ] Stealth link: devices reach the exit over sosistab3 (looks like random bytes, probes get nothing back) on the same port 443; the exit tells which devices are hidden; old plain clients keep working until switched off
+- [ ] Sentinel: the exit notes each device's network (ASN, country) and any revoked or unknown key that tries to connect; the page shows it
+- [ ] Trusted networks: apps connect on their own except on Wi-Fi you mark as trusted
+- [ ] Mac app: SwiftUI app + packet-tunnel extension, menu bar, same look as iPhone; TestFlight for Mac via CI
+- [ ] iPhone: Shield, stealth, trusted networks, setup by link (kestrel1: URL scheme)
+- [ ] Status page: Shield report, network per device, Mac setup by code
+- [ ] Deploy via sync.sh --deploy-only; lockdown test; README
+Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
