@@ -114,7 +114,8 @@ jobs:
           EXT="$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app/Contents/PlugIns/KestrelTunnel.appex/Contents/MacOS/KestrelTunnel"
           lipo -info "$EXT"
           otool -L "$EXT"
-          if otool -L "$EXT" | tail -n +2 | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
+          # a universal binary lists each architecture; only the indented lines are libraries
+          if otool -L "$EXT" | grep -E '^\s+\S' | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
             echo "::error::the tunnel extension links a library that is not part of macOS"; exit 1
           fi
           codesign -d --entitlements - "$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app" 2>/dev/null | head -40
