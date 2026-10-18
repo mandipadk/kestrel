@@ -37,10 +37,14 @@ No Geph broker, no Geph account, no paid plan.
 - **In-tunnel report.** A device can open `status.kestrel.internal` (or `shield-pause`,
   `shield-resume`) through its own tunnel to get its own Shield numbers; the engine exposes it as
   the `kestrel_exit` control method, which the apps use.
-- **Apps.** iPhone and Mac (SwiftUI, packet-tunnel extension, shared code in `apps/shared`),
-  with Shield, the link state, connect-automatically except on trusted Wi-Fi, and setup by
-  `kestrel1:` link or code. Both go to TestFlight from `.github/workflows/apple.yml`, which also
-  tests the engine against the live exit and keeps screenshots of every screen.
+- **Apps.** iPhone and Mac (SwiftUI, shared code in `apps/shared`), with Shield, the link
+  state, connect-automatically except on trusted Wi-Fi, and setup by `kestrel1:` link or code.
+  The iPhone app (packet-tunnel app extension) goes to TestFlight. The Mac app is a menu bar
+  app (macOS 14+) whose tunnel is a system extension; it is signed with Developer ID, notarized
+  and published as `Kestrel.dmg` on the `mac-latest` release, which the page links.
+  `.github/workflows/apple.yml` builds both, tests the engine against the live exit, keeps
+  screenshots of every screen, and runs `apps/mac/check-extension.sh` on the built app and on
+  the stapled disk image, so an extension macOS would refuse never gets published.
 
 Not built yet, worth doing: a second exit in Chicago with a switcher in the apps (needs root
 there and an Oracle ingress rule).
