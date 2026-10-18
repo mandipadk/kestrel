@@ -52,6 +52,7 @@ struct MacWelcomeView: View {
                 .background(Ink.raise, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Ink.line))
                 .onSubmit { model.setUp(from: code) }
+            ExtensionNotice().padding(.top, 12)
             if let err = model.error {
                 Text(err).font(.geist(13)).foregroundStyle(Ink.danger).padding(.top, 12)
             }
@@ -102,6 +103,7 @@ struct MacHomeView: View {
             }
             .padding(.top, 28)
 
+            ExtensionNotice().padding(.top, 16)
             if model.legacyProxyOn {
                 LegacyNotice().padding(.top, 16)
             }

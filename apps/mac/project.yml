@@ -1,7 +1,9 @@
-# Kestrel for Mac: a menu bar and window app with a packet-tunnel extension,
-# sharing its engine, tunnel and design code with the iPhone app (../shared).
-# Same bundle IDs as the iPhone app, so it is one App Store app on both.
-# Generate the Xcode project with `xcodegen` (see .github/workflows/apple.yml).
+# Kestrel for Mac: a menu bar and window app whose tunnel is a system
+# extension, sharing its engine, tunnel and design code with the iPhone app
+# (../shared). Shipped outside the App Store: signed with the owner's
+# Developer ID, notarized, as a .dmg. Generate the Xcode project with
+# `xcodegen` (see .github/workflows/apple.yml), which also passes the
+# Developer ID provisioning profiles.
 name: KestrelMac
 options:
   bundleIdPrefix: dev.mandip
@@ -11,7 +13,9 @@ options:
 settings:
   base:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
-    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: Developer ID Application
+    OTHER_CODE_SIGN_FLAGS: --timestamp
     MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: ${BUILD_NUMBER}
     SWIFT_VERSION: "5.9"
@@ -49,21 +53,24 @@ targets:
     entitlements:
       path: App/Kestrel.entitlements
       properties:
-        com.apple.security.app-sandbox: true
-        com.apple.security.network.client: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider-systemextension]
+        com.apple.developer.system-extension.install: true
+        com.apple.security.application-groups: [UK74VYMUP7.dev.mandip.kestrel]
+        # CoreWLAN only names the Wi-Fi with location permission
         com.apple.security.personal-information.location: true
-        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel
         PRODUCT_NAME: Kestrel
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PROVISIONING_PROFILE_SPECIFIER: ${MAC_APP_PROFILE}
     dependencies:
       - target: KestrelTunnel
   KestrelTunnel:
-    type: app-extension
+    type: system-extension
     platform: macOS
     sources:
+      - path: Tunnel
       - path: ../shared/PacketTunnelProvider.swift
       - path: ../shared/Engine.swift
     info:
@@ -73,19 +80,25 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+        NetworkExtension:
+          NEMachServiceName: UK74VYMUP7.dev.mandip.kestrel.tunnel
+          NEProviderClasses:
+            com.apple.networkextension.packet-tunnel: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
     entitlements:
       path: Tunnel/KestrelTunnel.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
         com.apple.security.network.server: true
-        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [UK74VYMUP7.dev.mandip.kestrel]
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider-systemextension]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel.tunnel
+        # macOS finds a system extension by its file name: <bundle id>.systemextension
+        PRODUCT_NAME: dev.mandip.kestrel.tunnel
+        PRODUCT_MODULE_NAME: KestrelTunnel
+        PROVISIONING_PROFILE_SPECIFIER: ${MAC_TUNNEL_PROFILE}
         SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../shared/Geph.h
         # the universal (arm64 + x86_64) static engine, linked by path
         OTHER_LDFLAGS: [$(SRCROOT)/../../target/universal-apple-darwin/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
@@ -111,6 +124,8 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../shared/Geph.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: NO
         OTHER_LDFLAGS: [$(SRCROOT)/../../target/universal-apple-darwin/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
 schemes:

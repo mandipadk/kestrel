@@ -1,7 +1,8 @@
 # Builds Kestrel's Apple apps on GitHub's macOS runners:
-#   - the Mac app (menu bar + window, packet-tunnel extension), tested against
-#     the live exit, signed with the App Store Connect API key and sent to
-#     TestFlight for Mac
+#   - the Mac app (menu bar + window, tunnel as a system extension), tested
+#     against the live exit, signed with the owner's Developer ID, notarized,
+#     and published as Kestrel.dmg on the mac-latest release (the Kestrel page
+#     links there)
 #   - the iPhone app, tested in the Simulator against the live exit and sent
 #     to TestFlight
 # Each job also keeps screenshots of its screens (sample data) as an artifact.
@@ -11,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       testflight:
-        description: Upload the builds to TestFlight
+        description: Upload the iPhone build to TestFlight and publish the Mac .dmg
         type: boolean
         default: true
   push:
@@ -35,6 +36,11 @@ jobs:
   mac:
     runs-on: macos-15
     timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      MAC_APP_PROFILE: Kestrel Mac Developer ID
+      MAC_TUNNEL_PROFILE: Kestrel Tunnel Developer ID
     steps:
       - uses: actions/checkout@v4
       - name: Xcode 26
@@ -79,71 +85,136 @@ jobs:
           path: ${{ runner.temp }}/screens
           if-no-files-found: ignore
           retention-days: 14
-      - name: API key
+      # Signing needs the owner's Developer ID certificate (MAC_DEVID_P12, base64,
+      # and MAC_DEVID_PASSWORD). Until it is there, the build stops after the tests.
+      - name: Developer ID certificate
+        id: devid
+        env:
+          P12: ${{ secrets.MAC_DEVID_P12 }}
+          P12_PASSWORD: ${{ secrets.MAC_DEVID_PASSWORD }}
+        run: |
+          if [[ -z "$P12" ]]; then
+            echo "::notice::No Developer ID certificate yet; skipping signing and the .dmg"
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KCPASS=$(openssl rand -hex 16)
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/devid.p12"
+          security import "$RUNNER_TEMP/devid.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild
+          rm -f "$RUNNER_TEMP/devid.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KC"
+          SERIAL=$(security find-certificate -c "Developer ID Application" -p "$KC" | openssl x509 -noout -serial | cut -d= -f2)
+          echo "serial=$SERIAL" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: API key and profiles
+        if: steps.devid.outputs.ready == 'true'
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           mkdir -p "$RUNNER_TEMP/keys"
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
           python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install 'pyjwt[crypto]'
-      - name: Bundle IDs
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
           export ASC_KEY_PATH="$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
-          "$RUNNER_TEMP/venv/bin/python" apps/asc.py bundle dev.mandip.kestrel
-          "$RUNNER_TEMP/venv/bin/python" apps/asc.py bundle dev.mandip.kestrel.tunnel
-      - name: Archive
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          PY="$RUNNER_TEMP/venv/bin/python"
+          $PY apps/asc.py capability dev.mandip.kestrel SYSTEM_EXTENSION_INSTALL
+          $PY apps/asc.py bundle dev.mandip.kestrel
+          $PY apps/asc.py bundle dev.mandip.kestrel.tunnel
+          for d in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do mkdir -p "$d"; done
+          $PY apps/asc.py devid-profile dev.mandip.kestrel "$MAC_APP_PROFILE" "${{ steps.devid.outputs.serial }}" "$RUNNER_TEMP/app.provisionprofile"
+          $PY apps/asc.py devid-profile dev.mandip.kestrel.tunnel "$MAC_TUNNEL_PROFILE" "${{ steps.devid.outputs.serial }}" "$RUNNER_TEMP/tunnel.provisionprofile"
+          for f in app tunnel; do
+            U=$(security cms -D -i "$RUNNER_TEMP/$f.provisionprofile" | plutil -extract UUID raw -)
+            cp "$RUNNER_TEMP/$f.provisionprofile" "$HOME/Library/MobileDevice/Provisioning Profiles/$U.provisionprofile"
+            cp "$RUNNER_TEMP/$f.provisionprofile" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/$U.provisionprofile"
+          done
+      - name: Archive (Developer ID)
+        if: steps.devid.outputs.ready == 'true'
         run: |
           set -o pipefail
           cd apps/mac
           xcodebuild -project KestrelMac.xcodeproj -scheme Kestrel -configuration Release \
             -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/KestrelMac.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM CURRENT_PROJECT_VERSION=$BUILD_NUMBER \
             archive | xcbeautify
-      - name: Check the extension only needs system libraries
-        run: |
-          EXT="$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app/Contents/PlugIns/KestrelTunnel.appex/Contents/MacOS/KestrelTunnel"
-          lipo -info "$EXT"
-          otool -L "$EXT"
-          # a universal binary lists each architecture; only the indented lines are libraries
-          if otool -L "$EXT" | grep -E '^\s+\S' | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
-            echo "::error::the tunnel extension links a library that is not part of macOS"; exit 1
-          fi
-          codesign -d --entitlements - "$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app" 2>/dev/null | head -40
-      - name: Upload to TestFlight
-        if: github.event_name == 'push' || inputs.testflight
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
           cat > "$RUNNER_TEMP/export.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
+            <key>method</key><string>developer-id</string>
             <key>teamID</key><string>$DEVELOPMENT_TEAM</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Developer ID Application</string>
+            <key>provisioningProfiles</key><dict>
+              <key>dev.mandip.kestrel</key><string>$MAC_APP_PROFILE</string>
+              <key>dev.mandip.kestrel.tunnel</key><string>$MAC_TUNNEL_PROFILE</string>
+            </dict>
           </dict></plist>
           EOF
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/KestrelMac.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-      - name: Clean up the key
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export"
+      - name: Check the app
+        if: steps.devid.outputs.ready == 'true'
+        run: |
+          APP="$RUNNER_TEMP/export/Kestrel.app"
+          EXT="$APP/Contents/Library/SystemExtensions/dev.mandip.kestrel.tunnel.systemextension"
+          lipo -info "$EXT/Contents/MacOS/dev.mandip.kestrel.tunnel" || lipo -info "$EXT/Contents/MacOS/"*
+          # a universal binary lists each architecture; only the indented lines are libraries
+          if otool -L "$EXT/Contents/MacOS/"* | grep -E '^\s+\S' | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
+            echo "::error::the tunnel extension links a library that is not part of macOS"; exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP" 2>/dev/null
+          codesign -d --entitlements - "$EXT" 2>/dev/null
+      - name: Disk image, notarized
+        if: steps.devid.outputs.ready == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE"
+          cp -R "$RUNNER_TEMP/export/Kestrel.app" "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname Kestrel -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$RUNNER_TEMP/Kestrel.dmg"
+          codesign --sign "Developer ID Application" --timestamp "$RUNNER_TEMP/Kestrel.dmg"
+          xcrun notarytool submit "$RUNNER_TEMP/Kestrel.dmg" --key "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait --timeout 30m --output-format json | tee "$RUNNER_TEMP/notary.json"
+          ID=$(plutil -extract id raw "$RUNNER_TEMP/notary.json")
+          if [[ $(plutil -extract status raw "$RUNNER_TEMP/notary.json") != Accepted ]]; then
+            xcrun notarytool log "$ID" --key "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID"
+            echo "::error::notarization was not accepted"; exit 1
+          fi
+          xcrun stapler staple "$RUNNER_TEMP/Kestrel.dmg"
+          xcrun stapler validate "$RUNNER_TEMP/Kestrel.dmg"
+          spctl --assess --type open --context context:primary-signature -vv "$RUNNER_TEMP/Kestrel.dmg"
+      - uses: actions/upload-artifact@v4
+        if: steps.devid.outputs.ready == 'true'
+        with:
+          name: kestrel-mac-dmg
+          path: ${{ runner.temp }}/Kestrel.dmg
+          retention-days: 30
+      - name: Publish for the Kestrel page
+        if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view mac-latest >/dev/null 2>&1 || \
+            gh release create mac-latest --title "Kestrel for Mac" --prerelease \
+              --notes "The latest Kestrel for Mac, signed with Developer ID and notarized. Built from ${GITHUB_SHA::7}."
+          gh release upload mac-latest "$RUNNER_TEMP/Kestrel.dmg" --clobber
+          gh release edit mac-latest --notes "The latest Kestrel for Mac (build $BUILD_NUMBER), signed with Developer ID and notarized. Built from ${GITHUB_SHA::7}."
+      - name: Clean up the key and keychain
         if: always()
-        run: rm -rf "$RUNNER_TEMP/keys"
+        run: |
+          rm -rf "$RUNNER_TEMP/keys"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
 
   ios:
     runs-on: macos-15
