@@ -282,11 +282,16 @@ struct HourStrip: View {
 // MARK: - Sample data (previews and screenshots)
 
 enum Sample {
-    static let device = DeviceKey(n: "macbook", s: String(repeating: "0", count: 64), e: "203.0.113.7:443", k: String(repeating: "1", count: 64))
+    #if os(iOS)
+    static let deviceName = "iphone"
+    #else
+    static let deviceName = "macbook"
+    #endif
+    static let device = DeviceKey(n: deviceName, s: String(repeating: "0", count: 64), e: "203.0.113.7:443", k: String(repeating: "1", count: 64))
 
     /// Plausible numbers for a laptop's day, labelled as samples wherever shown.
     static let report = ExitReport(
-        device: "macbook", stealth: true, exitCity: "Frankfurt", exitCountry: "DE",
+        device: deviceName, stealth: true, exitCity: "Frankfurt", exitCountry: "DE",
         shield: .init(on: true, pausedUntil: nil, lookups24h: 9_412, blocked24h: 1_284, blockedTotal: 20_117,
                       hourly: [12, 8, 3, 0, 0, 0, 1, 4, 22, 61, 88, 93, 70, 102, 84, 77, 95, 120, 96, 74, 58, 66, 81, 70],
                       top: [("app-measurement.com", 212), ("browser-intake-datadoghq.com", 164), ("stats.g.doubleclick.net", 139),

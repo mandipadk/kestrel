@@ -68,7 +68,7 @@ struct WelcomeView: View {
 
 struct HomeView: View {
     @EnvironmentObject var model: TunnelModel
-    @State private var showSettings = false
+    @State private var showSettings = ProcessInfo.processInfo.arguments.contains("-KestrelShowSettings")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

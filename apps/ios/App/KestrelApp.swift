@@ -10,7 +10,13 @@ struct KestrelApp: App {
             RootView()
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
-                .task { await model.load() }
+                .task {
+                    if let sample = TunnelModel.launchSample {
+                        model.applySample(sample)
+                    } else {
+                        await model.load()
+                    }
+                }
                 // a kestrel1: link opened from the Kestrel page sets this iPhone up
                 .onOpenURL { url in
                     let code = url.absoluteString
