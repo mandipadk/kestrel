@@ -55,7 +55,8 @@ struct DeviceKey: Codable, Equatable {
             "passthrough_china": false,
             "allow_lan": false,
             // stealth: the link to the exit looks like random bytes
-            "kestrel_device": ["name": n, "secret": s, "stealth": true],
+            // vpn_mtu: the engine's packets must fit the tunnel's MTU (1450, PacketTunnelProvider)
+            "kestrel_device": ["name": n, "secret": s, "stealth": true, "vpn_mtu": 1450],
         ]
         let data = try! JSONSerialization.data(withJSONObject: cfg)
         return String(data: data, encoding: .utf8)!

@@ -54,16 +54,22 @@ pub async fn vpn_loop(ctx: &AnyCtx<crate::Config>) -> anyhow::Result<()> {
     let (send_captured, recv_captured) = async_channel::bounded(100);
     let (send_injected, recv_injected) = async_channel::bounded(100);
 
+    // Kestrel: the stack's MTU must match the tunnel's. Upstream gives only
+    // iOS 1450; the Mac's system extension got 16384, and macOS dropped every
+    // packet over its 1450-byte tunnel MTU, so pages never loaded.
+    let mtu = ctx
+        .init()
+        .kestrel_device
+        .as_ref()
+        .and_then(|d| d.vpn_mtu)
+        .unwrap_or(if cfg!(any(target_os = "ios", target_os = "macos")) {
+            1450
+        } else {
+            16384
+        });
     let ipstack = IpStack::new(
-        #[cfg(target_os = "ios")]
         IpStackConfig {
-            mtu: 1450,
-            tcp_timeout: std::time::Duration::from_secs(3600),
-            udp_timeout: std::time::Duration::from_secs(600),
-        },
-        #[cfg(not(target_os = "ios"))]
-        IpStackConfig {
-            mtu: 16384,
+            mtu,
             tcp_timeout: std::time::Duration::from_secs(3600),
             udp_timeout: std::time::Duration::from_secs(600),
         },

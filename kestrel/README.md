@@ -47,6 +47,11 @@ No Geph broker, no Geph account, no paid plan.
   the stapled disk image, then installs the app in `/Applications` on the runner and has it ask
   the real `sysextd` for the tunnel (`--check-extension`); anything but "waiting for approval" fails
   the build, so an extension macOS would refuse never gets published.
+- **Packet path test.** `kestrel/vpn-path-test.py` drives the engine exactly as the iPhone and Mac
+  tunnels do (`send_pkt`/`recv_pkt`, 1450-byte MTU) against a TUN device in a private network
+  namespace, loads real pages and a 25 MB download, and fails if any packet to the system is over
+  the MTU. `sync.sh` runs it on the live exit after the lockdown test and rolls back if it fails;
+  the Apple CI engine tests fetch 20 kB over TCP through the Mac and iPhone engines the same way.
 - **Mac updates.** The Mac app updates itself with Sparkle (pinned in `apps/mac/project.yml`).
   CI signs each `.dmg` and the appcast itself with the EdDSA key in the `SPARKLE_ED_KEY` secret
   (backup: `~/.config/kestrel/sparkle` on Chicago); the app trusts only the matching

@@ -49,3 +49,9 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] OWNER: install 1.2 once by hand (1.1 has no updater); after that it updates itself
 - [x] OWNER: 1.2 refused by sysextd: "network_extension category require the presence of NSSystemExtensionUsageDescription" (only the app had it). Now in the extension's plist; check-extension.sh checks it
 - [x] CI install test: the notarized app, in /Applications on the runner, asks the real sysextd for the tunnel (build 27: validating_by_category -> activated_waiting_for_user). A control without the key got the owner's exact error (run 39157236592); control removed after
+
+## Round 4 (2026-10-18): pages wouldn't load on the Mac
+- [x] OWNER: Mac connected but no page loaded. Cause: upstream gives the engine's IP stack MTU 1450 only on iOS; macOS got 16384, so the Mac tunnel (MTU 1450) was handed packets up to 8232 bytes and macOS dropped them. DNS (small) worked, pages didn't. Not the stealth link.
+- [x] Fix: kestrel_device.vpn_mtu (apps send 1450) and a 1450 default on macOS too (binaries/geph5-client/src/vpn.rs)
+- [x] EngineTests.testAPageLoadsInPacketsThatFitTheTunnel: 20 kB over TCP through the engine, every packet <= 1450. Control run 39161619655 (test without fix): Mac failed with an 8232-byte packet
+- [x] kestrel/vpn-path-test.py: the apps' packet path on Linux (TUN in a netns): 5 real pages, 25 MB download, MTU check; sync.sh runs it on the live exit before keeping a deploy (rollback otherwise)
