@@ -210,6 +210,25 @@ jobs:
           spctl --assess --type execute -vv "$MNT/Kestrel.app" || rc=1
           hdiutil detach "$MNT" >/dev/null
           exit $rc
+      # The real thing, not a list of checks: install the app from the stapled
+      # .dmg into /Applications and have it ask sysextd for the tunnel. macOS
+      # validates the extension first; passing means it waits for approval.
+      - name: Install test (sysextd accepts the tunnel)
+        if: steps.devid.outputs.ready == 'true'
+        run: |
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$RUNNER_TEMP/Kestrel.dmg" >/dev/null
+          sudo rm -rf /Applications/Kestrel.app
+          ditto "$MNT/Kestrel.app" /Applications/Kestrel.app
+          hdiutil detach "$MNT" >/dev/null
+          /Applications/Kestrel.app/Contents/MacOS/Kestrel --check-extension & PID=$!
+          for _ in $(seq 120); do kill -0 $PID 2>/dev/null || break; sleep 1; done
+          rc=0
+          if kill -0 $PID 2>/dev/null; then kill $PID; echo "::error::no answer from sysextd in 2 minutes"; rc=1
+          else wait $PID || { rc=$?; echo "::error::sysextd refused the tunnel extension (see above)"; }; fi
+          systemextensionsctl list || true
+          log show --last 3m --style compact --predicate 'process == "sysextd"' | tail -40 || true
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: steps.devid.outputs.ready == 'true'
         with:

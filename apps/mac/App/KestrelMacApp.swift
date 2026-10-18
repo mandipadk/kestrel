@@ -44,8 +44,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published var setupRequests = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--check-extension") { return checkExtensionAndExit() }
         // starts Sparkle's daily check
         _ = Updates.shared
+    }
+
+    /// CI: asks sysextd to install the tunnel, as a first launch does, and
+    /// says what it answered, so a refusal fails the build, not the owner's Mac.
+    private func checkExtensionAndExit() {
+        Task {
+            await TunnelExtension.shared.activate()
+            let state = TunnelExtension.shared.state
+            FileHandle.standardError.write(Data("sysextd answered: \(state)\n".utf8))
+            switch state {
+            case .needsApproval, .ready: exit(0)
+            default: exit(1)
+            }
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
