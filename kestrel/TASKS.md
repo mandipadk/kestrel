@@ -10,9 +10,11 @@
 - [x] Security review run by hand: bumped advisory crates, deployed a73c189; fixed Claude invocation (prompt on stdin)
 - [x] App Store Connect key in GH secrets; bundle IDs dev.mandip.kestrel(.tunnel) registered with Network Extensions (team UK74VYMUP7)
 - [x] iPhone app source (apps/ios) + Mac kit (apps/mac) + .github/workflows/apple.yml
-- [ ] OWNER: Oracle security list ingress TCP 443 (SYNs from outside never arrive)
-- [ ] OWNER: make repo public (GitHub Actions billing blocks private macOS runners). Server IP is in history of 2 commits (kestrelctl default, security-review default); my history rewrite was blocked. Current code still has it too; remove via /var/lib/kestrel/endpoint once allowed.
-- [ ] OWNER: create App Store Connect app "Kestrel Private", bundle dev.mandip.kestrel, SKU kestrel
-- [ ] After those: rerun apple workflow, fix compile errors, copy Mac binary to ~/sites/kestrel/dist/kestrel-client-macos, add devices (iphone, macbook), verify from outside
+- [x] OWNER did: Oracle 443 open, repo public, App Store app "Space: Kestrel" (6824089371)
+- [x] Outside-in lockdown test from Chicago: enrolled key exits as Frankfurt; no key / stranger key refused
+- [x] Apple CI green: Mac universal client (on the status page), iPhone build 3 VALID, internal TestFlight group "Owner" (all builds)
+- [ ] OWNER: install TestFlight build on iPhone, add iPhone + Mac from the Kestrel page; then confirm both show "Connected now"
+- [ ] Server IP still appears in kestrelctl default + security-review default (and history); move to /var/lib/kestrel/endpoint when allowed
 - [ ] Remaining advisories needing manual bumps: sqlx 0.7 -> 0.8 (major), rsa (no fix, Marvin), rustls 0.21 line via an old dep
 - [ ] Firewall: exempt lo from the per-source hashlimit (next root change)
+- [ ] Mac: a signed/notarized installer would remove the one Terminal step
