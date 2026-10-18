@@ -1,12 +1,23 @@
 import Foundation
 
+/// One of the owner's exits: city, endpoint and its public key.
+struct KestrelExit: Codable, Equatable, Hashable {
+    let c: String
+    let e: String
+    let k: String
+
+    var city: String { c }
+}
+
 /// A device identity as carried by the setup QR code on the Kestrel page:
-/// `kestrel1:` + base64url(JSON {n: name, s: secret, e: endpoint, k: exit key}).
+/// `kestrel1:` + base64url(JSON {n: name, s: secret, e: endpoint, k: exit key,
+/// x: [all exits], optional}).
 struct DeviceKey: Codable, Equatable {
     let n: String
     let s: String
     let e: String
     let k: String
+    var x: [KestrelExit]? = nil
 
     var name: String { n }
     var endpoint: String { e }
@@ -40,11 +51,29 @@ struct DeviceKey: Codable, Equatable {
         guard let e = fields["e"] as? String, let port = e.split(separator: ":").last, Int(port) != nil else {
             return .failure(.missing("exit address"))
         }
-        return .success(DeviceKey(n: name, s: fields["s"] as! String, e: e, k: fields["k"] as! String))
+        // all of the owner's exits (codes made before there were two have none)
+        var exits: [KestrelExit] = []
+        for item in fields["x"] as? [[String: Any]] ?? [] {
+            guard let c = item["c"] as? String, !c.isEmpty, let xe = item["e"] as? String,
+                  let xp = xe.split(separator: ":").last, Int(xp) != nil, isHex64(item["k"]) else {
+                return .failure(.missing("exit list"))
+            }
+            exits.append(KestrelExit(c: c, e: xe, k: item["k"] as! String))
+        }
+        return .success(DeviceKey(n: name, s: fields["s"] as! String, e: e, k: fields["k"] as! String,
+                                  x: exits.isEmpty ? nil : exits))
     }
 
-    /// The geph5-client config for this device: no broker, straight to our exit.
-    var clientConfig: String {
+    /// The geph5-client config for this device: no broker, straight to the
+    /// first exit, or (with `exits`) to whichever of them the engine picks.
+    var clientConfig: String { clientConfig(exits: x ?? [], choice: nil) }
+
+    func clientConfig(exits: [KestrelExit], choice: String?) -> String {
+        var device: [String: Any] = ["name": n, "secret": s, "stealth": true, "vpn_mtu": 1450]
+        if !exits.isEmpty {
+            device["exits"] = exits.map { ["endpoint": $0.e, "pubkey": $0.k, "city": $0.c] }
+            if let choice { device["exit_choice"] = choice }
+        }
         let cfg: [String: Any] = [
             "exit_constraint": ["direct": "\(e)/\(k)"],
             "allow_direct": false,
@@ -56,7 +85,7 @@ struct DeviceKey: Codable, Equatable {
             "allow_lan": false,
             // stealth: the link to the exit looks like random bytes
             // vpn_mtu: the engine's packets must fit the tunnel's MTU (1450, PacketTunnelProvider)
-            "kestrel_device": ["name": n, "secret": s, "stealth": true, "vpn_mtu": 1450],
+            "kestrel_device": device,
         ]
         let data = try! JSONSerialization.data(withJSONObject: cfg)
         return String(data: data, encoding: .utf8)!

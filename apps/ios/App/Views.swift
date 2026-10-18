@@ -14,7 +14,7 @@ struct WelcomeView: View {
             Wordmark()
                 .padding(.top, 8)
             Spacer()
-            Text("Your own way out,\nthrough Frankfurt.")
+            Text("Your own way out,\nthrough your own servers.")
                 .font(.geist(34, .semibold))
                 .tracking(-1.0)
                 .lineSpacing(2)
@@ -102,7 +102,7 @@ struct HomeView: View {
 
                     VStack(spacing: 0) {
                         FactRow(label: "Seen as", value: model.publicIP ?? (model.isOn ? "checking…" : "your own address"), mono: model.publicIP != nil)
-                        FactRow(label: "Exit", value: "Frankfurt", mono: false)
+                        FactRow(label: "Exit", value: model.exitDescription, mono: false)
                         FactRow(label: "Link", value: model.linkDescription, mono: false)
                     }
                     .padding(.top, 32)
@@ -161,6 +161,11 @@ struct SettingsSheet: View {
 
                 TrustedNetworks()
                     .padding(.bottom, 8)
+
+                if model.exits.count > 1 {
+                    ExitChoice()
+                        .padding(.bottom, 8)
+                }
 
                 Divider().overlay(Ink.line)
                 SettingsRow(icon: "waveform.path.ecg", title: "Connection details") {
@@ -317,5 +322,45 @@ struct ReportSheet: View {
         .padding(24)
         .background(Ink.raise.ignoresSafeArea())
         .foregroundStyle(Ink.ink)
+    }
+}
+
+// MARK: - Exit choice
+
+/// Automatic (the fastest exit, and the other if it stops answering), or one exit.
+struct ExitChoice: View {
+    @EnvironmentObject var model: TunnelModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().overlay(Ink.line)
+            Text("Exit").font(.geist(16, .medium)).padding(.top, 16)
+            Text("Automatic uses the fastest exit when Kestrel connects, and moves to the other if it stops answering.")
+                .font(.geist(14)).foregroundStyle(Ink.muted).padding(.top, 4).padding(.bottom, 8)
+            row(title: "Automatic", detail: nil, city: nil)
+            ForEach(model.exits, id: \.self) { exit in
+                row(title: exit.city, detail: exit.city == model.report?.exitCity && model.isOn ? "In use" : nil, city: exit.city)
+            }
+        }
+    }
+
+    private func row(title: String, detail: String?, city: String?) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            Task { await model.setExitChoice(city) }
+        } label: {
+            HStack {
+                Text(title).font(.geist(16)).foregroundStyle(Ink.ink)
+                if let detail { Text(detail).font(.geist(14)).foregroundStyle(Ink.muted) }
+                Spacer()
+                if model.exitChoice == city {
+                    Image(systemName: "checkmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(Ink.accent)
+                }
+            }
+            .frame(minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(model.exitChoice == city ? .isSelected : [])
     }
 }

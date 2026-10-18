@@ -112,14 +112,22 @@ extension TunnelModel {
         if let since = connectedSince, isOn {
             return "Private since \(since.formatted(date: .omitted, time: .shortened))."
         }
-        return isBusy ? "Talking to Frankfurt…" : "Your traffic goes the usual way."
+        guard isBusy else { return "Your traffic goes the usual way." }
+        return exits.count > 1 && exitChoice == nil ? "Finding the fastest exit…" : "Talking to \(exitName)…"
     }
 
     /// How the link to the exit looks on the wire.
     var linkDescription: String {
         guard isOn else { return "Hidden when connected" }
         guard let report else { return "checking…" }
-        return report.stealth ? "Hidden" : "Plain"
+        let wire = report.stealth ? "Hidden" : "Plain"
+        return report.quantumSafe ? "\(wire), quantum-safe" : wire
+    }
+
+    /// The exit row: where traffic leaves, and whether Kestrel chose it.
+    var exitDescription: String {
+        guard exits.count > 1 else { return exitName }
+        return exitChoice == nil ? "\(exitName), automatic" : exitName
     }
 }
 
@@ -288,10 +296,12 @@ enum Sample {
     static let deviceName = "macbook"
     #endif
     static let device = DeviceKey(n: deviceName, s: String(repeating: "0", count: 64), e: "203.0.113.7:443", k: String(repeating: "1", count: 64))
+    static let exits = [KestrelExit(c: "Chicago", e: "198.51.100.20:443", k: String(repeating: "2", count: 64)),
+                        KestrelExit(c: "Frankfurt", e: "203.0.113.7:443", k: String(repeating: "1", count: 64))]
 
     /// Plausible numbers for a laptop's day, labelled as samples wherever shown.
     static let report = ExitReport(
-        device: deviceName, stealth: true, exitCity: "Frankfurt", exitCountry: "DE",
+        device: deviceName, stealth: true, quantumSafe: true, exitCity: "Chicago", exitCountry: "US",
         shield: .init(on: true, pausedUntil: nil, lookups24h: 9_412, blocked24h: 1_284, blockedTotal: 20_117,
                       hourly: [12, 8, 3, 0, 0, 0, 1, 4, 22, 61, 88, 93, 70, 102, 84, 77, 95, 120, 96, 74, 58, 66, 81, 70],
                       top: [("app-measurement.com", 212), ("browser-intake-datadoghq.com", 164), ("stats.g.doubleclick.net", 139),
