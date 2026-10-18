@@ -169,9 +169,10 @@ jobs:
           if otool -L "$EXT/Contents/MacOS/"* | grep -E '^\s+\S' | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
             echo "::error::the tunnel extension links a library that is not part of macOS"; exit 1
           fi
-          codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -d --entitlements - "$APP" 2>/dev/null
           codesign -d --entitlements - "$EXT" 2>/dev/null
+          # what sysextd checks before it installs the tunnel; fails the build if any is off
+          apps/mac/check-extension.sh "$APP"
       - name: Disk image, notarized
         if: steps.devid.outputs.ready == 'true'
         env:
@@ -194,6 +195,13 @@ jobs:
           xcrun stapler staple "$RUNNER_TEMP/Kestrel.dmg"
           xcrun stapler validate "$RUNNER_TEMP/Kestrel.dmg"
           spctl --assess --type open --context context:primary-signature -vv "$RUNNER_TEMP/Kestrel.dmg"
+          # and the app exactly as the owner gets it, from the stapled disk image
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$RUNNER_TEMP/Kestrel.dmg" >/dev/null
+          rc=0; apps/mac/check-extension.sh "$MNT/Kestrel.app" || rc=1
+          spctl --assess --type execute -vv "$MNT/Kestrel.app" || rc=1
+          hdiutil detach "$MNT" >/dev/null
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: steps.devid.outputs.ready == 'true'
         with:
