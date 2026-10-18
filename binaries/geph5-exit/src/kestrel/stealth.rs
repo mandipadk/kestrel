@@ -383,15 +383,18 @@ mod tests {
         }
     }
 
+    /// Sniffs these bytes the way the listener does, with its time limit.
+    /// With `keep_open`, the peer stays connected as a live client would.
     async fn sniff_bytes(bytes: Vec<u8>, keep_open: bool) -> Sniffed {
         let (mut a, mut b) = tokio::io::duplex(1 << 16);
         a.write_all(&bytes).await.unwrap();
-        if !keep_open {
-            drop(a);
-            return sniff(&mut b, cookie()).await.unwrap_or(Sniffed::Junk);
-        }
-        let res = sniff(&mut b, cookie()).await.unwrap_or(Sniffed::Junk);
-        drop(a);
+        let peer = keep_open.then_some(a);
+        let res = tokio::time::timeout(Duration::from_secs(2), sniff(&mut b, cookie()))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(Sniffed::Junk);
+        drop(peer);
         res
     }
 
