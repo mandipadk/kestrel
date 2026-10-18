@@ -9,7 +9,13 @@ struct KestrelMacApp: App {
         Window("Kestrel", id: "main") {
             MacRootView()
                 .environmentObject(model)
-                .task { await model.load() }
+                .task {
+                    if let sample = TunnelModel.launchSample {
+                        model.applySample(sample)
+                    } else {
+                        await model.load()
+                    }
+                }
                 .onOpenURL { url in model.setUp(from: url.absoluteString) }
         }
         .windowResizability(.contentSize)

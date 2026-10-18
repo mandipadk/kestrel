@@ -1,13 +1,17 @@
-# Builds Kestrel's Apple clients on GitHub's macOS runners:
-#   - the Mac command-line client (universal binary), as a workflow artifact
-#   - the iPhone app, signed with the App Store Connect API key and sent to TestFlight
+# Builds Kestrel's Apple apps on GitHub's macOS runners:
+#   - the Mac app (menu bar + window, packet-tunnel extension), tested against
+#     the live exit, signed with the App Store Connect API key and sent to
+#     TestFlight for Mac
+#   - the iPhone app, tested in the Simulator against the live exit and sent
+#     to TestFlight
+# Each job also keeps screenshots of its screens (sample data) as an artifact.
 name: apple
 
 on:
   workflow_dispatch:
     inputs:
       testflight:
-        description: Upload the iPhone build to TestFlight
+        description: Upload the builds to TestFlight
         type: boolean
         default: true
   push:
@@ -16,45 +20,133 @@ on:
       - apps/**
       - binaries/geph5-client/**
       - libraries/geph5-misc-rpc/**
+      - libraries/sillad-sosistab3/**
       - .github/workflows/apple.yml
 
 concurrency:
   group: apple
   cancel-in-progress: true
 
+env:
+  DEVELOPMENT_TEAM: UK74VYMUP7
+  BUILD_NUMBER: ${{ github.run_number }}
+
 jobs:
   mac:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Xcode 26
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          echo "using $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
       - name: Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          key: mac
-      - name: Build
+          key: mac-app
+      - name: Build the engine (universal)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: |
-          cargo build --release -p geph5-client --bin geph5-client --target aarch64-apple-darwin
-          cargo build --release -p geph5-client --bin geph5-client --target x86_64-apple-darwin
-          mkdir -p out
-          lipo -create -output out/kestrel-client \
-            target/aarch64-apple-darwin/release/geph5-client \
-            target/x86_64-apple-darwin/release/geph5-client
-          lipo -info out/kestrel-client
-          out/kestrel-client --help | head -5
+          cargo build --release -p geph5-client --lib --target aarch64-apple-darwin
+          cargo build --release -p geph5-client --lib --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/libgeph5_client.a \
+            target/aarch64-apple-darwin/release/libgeph5_client.a \
+            target/x86_64-apple-darwin/release/libgeph5_client.a
+          lipo -info target/universal-apple-darwin/release/libgeph5_client.a
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd apps/mac && xcodegen generate
+      - name: Engine test (real packets through the exit) and screenshots
+        env:
+          TEST_RUNNER_KESTREL_CODE: ${{ secrets.KESTREL_CI_CODE }}
+          TEST_RUNNER_SNAPSHOT_DIR: ${{ runner.temp }}/screens
+        run: |
+          set -o pipefail
+          cd apps/mac
+          xcodebuild test -project KestrelMac.xcodeproj -scheme EngineTests -configuration Release \
+            -destination 'platform=macOS' | xcbeautify
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: kestrel-client-macos
-          path: out/kestrel-client
-          retention-days: 30
+          name: screens-mac
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+          python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install 'pyjwt[crypto]'
+      - name: Bundle IDs
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+          "$RUNNER_TEMP/venv/bin/python" apps/asc.py bundle dev.mandip.kestrel
+          "$RUNNER_TEMP/venv/bin/python" apps/asc.py bundle dev.mandip.kestrel.tunnel
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          cd apps/mac
+          xcodebuild -project KestrelMac.xcodeproj -scheme Kestrel -configuration Release \
+            -destination 'generic/platform=macOS' -archivePath "$RUNNER_TEMP/KestrelMac.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM CURRENT_PROJECT_VERSION=$BUILD_NUMBER \
+            archive | xcbeautify
+      - name: Check the extension only needs system libraries
+        run: |
+          EXT="$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app/Contents/PlugIns/KestrelTunnel.appex/Contents/MacOS/KestrelTunnel"
+          lipo -info "$EXT"
+          otool -L "$EXT"
+          if otool -L "$EXT" | tail -n +2 | grep -vE '^\s+(/usr/lib/|/System/Library/)'; then
+            echo "::error::the tunnel extension links a library that is not part of macOS"; exit 1
+          fi
+          codesign -d --entitlements - "$RUNNER_TEMP/KestrelMac.xcarchive/Products/Applications/Kestrel.app" 2>/dev/null | head -40
+      - name: Upload to TestFlight
+        if: github.event_name == 'push' || inputs.testflight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$DEVELOPMENT_TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/KestrelMac.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+      - name: Clean up the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
 
   ios:
     runs-on: macos-15
-    timeout-minutes: 75
-    env:
-      DEVELOPMENT_TEAM: UK74VYMUP7
-      BUILD_NUMBER: ${{ github.run_number }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Xcode 26 (App Store Connect requires the iOS 26 SDK)
@@ -64,7 +156,7 @@ jobs:
           sudo xcode-select -s "$XC"
           xcodebuild -version
       - name: Rust target
-        run: rustup target add aarch64-apple-ios
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
         with:
           key: ios
@@ -75,23 +167,40 @@ jobs:
       - name: Engine for the Simulator
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-        run: |
-          rustup target add aarch64-apple-ios-sim
-          cargo build --release -p geph5-client --lib --target aarch64-apple-ios-sim
+        run: cargo build --release -p geph5-client --lib --target aarch64-apple-ios-sim
       - name: Generate the Xcode project
         run: |
           brew install xcodegen
           cd apps/ios && xcodegen generate
+      - name: Pick a Simulator
+        run: |
+          SIM=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "simulator $SIM"
+          echo "SIM=$SIM" >> "$GITHUB_ENV"
       - name: Engine test (Simulator, real packets through the exit)
         env:
           TEST_RUNNER_KESTREL_CODE: ${{ secrets.KESTREL_CI_CODE }}
         run: |
-          SIM=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
-          echo "simulator $SIM"
           set -o pipefail
           cd apps/ios
           xcodebuild test -project Kestrel.xcodeproj -scheme EngineTests -configuration Release \
             -destination "id=$SIM" ARCHS=arm64 ONLY_ACTIVE_ARCH=YES | xcbeautify
+      - name: Screenshots (sample data)
+        run: |
+          set -o pipefail
+          cd apps/ios
+          xcodebuild test -project Kestrel.xcodeproj -scheme Screens -destination "id=$SIM" \
+            -resultBundlePath "$RUNNER_TEMP/screens.xcresult" CODE_SIGNING_ALLOWED=NO | xcbeautify
+          mkdir -p "$RUNNER_TEMP/screens"
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/screens.xcresult" --output-path "$RUNNER_TEMP/screens"
+          ls -la "$RUNNER_TEMP/screens"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens-iphone
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: ignore
+          retention-days: 14
       - name: API key
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
@@ -99,6 +208,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/keys"
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+          python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install 'pyjwt[crypto]'
+      - name: Capabilities (Wi-Fi name for trusted networks)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          export ASC_KEY_PATH="$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
+          "$RUNNER_TEMP/venv/bin/python" apps/asc.py capability dev.mandip.kestrel ACCESS_WIFI_INFORMATION
+          "$RUNNER_TEMP/venv/bin/python" apps/asc.py bundle dev.mandip.kestrel
       - name: Archive
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
