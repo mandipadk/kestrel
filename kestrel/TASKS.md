@@ -31,7 +31,9 @@ Picked (research notes in kestrel/README.md "What Kestrel adds"):
 - [x] Trusted networks: apps connect on their own except on Wi-Fi you mark as trusted
 - [x] Mac app: SwiftUI app, menu bar, same look as iPhone; engine tests pass on the macOS runner against the live exit
 - [x] OWNER changed plan: Mac ships as a Developer ID, notarized .dmg (system extension), not TestFlight; CI publishes it to the mac-latest release, the page links it
-- [ ] OWNER: Developer ID .p12 + password (asked via power secret kestrel-developer-id) -> gh secrets MAC_DEVID_P12 / MAC_DEVID_PASSWORD -> first signed, notarized .dmg
+- [x] OWNER gave the Developer ID .p12 + password (~/.secrets/kestrel-developer-id)
+- [ ] Copy it into gh secrets MAC_DEVID_P12 (base64) / MAC_DEVID_PASSWORD: this session's permission rules deny reading ~/.secrets; owner approved the copy, waiting on how to allow it -> then dispatch apple, check notarization + mac-latest release
+- [x] Revoked 10 dead "Created via API" dev certs (owner approved); CI now signs with one lasting dev identity (IOS_DEV_P12, key in ~/.config/kestrel/ci-dev on Chicago); iPhone archive + TestFlight upload verified, no new cert made
 - [x] iPhone: Shield, stealth, trusted networks, setup by link (kestrel1: URL scheme); 1.1 build in TestFlight
 - [x] Status page: Shield report, network per device, Mac setup by code
 - [x] Deploy via sync.sh --deploy-only; lockdown test; README
