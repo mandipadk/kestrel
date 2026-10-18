@@ -1,0 +1,130 @@
+# Kestrel for Mac: a menu bar and window app with a packet-tunnel extension,
+# sharing its engine, tunnel and design code with the iPhone app (../shared).
+# Same bundle IDs as the iPhone app, so it is one App Store app on both.
+# Generate the Xcode project with `xcodegen` (see .github/workflows/apple.yml).
+name: KestrelMac
+options:
+  bundleIdPrefix: dev.mandip
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.1"
+    CURRENT_PROJECT_VERSION: ${BUILD_NUMBER}
+    SWIFT_VERSION: "5.9"
+    ENABLE_HARDENED_RUNTIME: YES
+    DEAD_CODE_STRIPPING: YES
+targets:
+  Kestrel:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+      - path: ../shared/TunnelModel.swift
+      - path: ../shared/DeviceKey.swift
+      - path: ../shared/Theme.swift
+      - path: ../shared/Fonts
+        buildPhase: resources
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: Kestrel
+        CFBundleDisplayName: Kestrel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        ATSApplicationFontsPath: "."
+        ITSAppUsesNonExemptEncryption: false
+        NSHumanReadableCopyright: Kestrel, a private Geph exit. MPL 2.0.
+        NSLocationUsageDescription: macOS only tells an app your Wi-Fi network's name with this permission. Kestrel uses it to trust Wi-Fi you choose and never reads your location.
+        NSLocationWhenInUseUsageDescription: macOS only tells an app your Wi-Fi network's name with this permission. Kestrel uses it to trust Wi-Fi you choose and never reads your location.
+        # kestrel1: links from the Kestrel page set the Mac up
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.mandip.kestrel.setup
+            CFBundleURLSchemes: [kestrel1]
+    entitlements:
+      path: App/Kestrel.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.personal-information.location: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel
+        PRODUCT_NAME: Kestrel
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: KestrelTunnel
+  KestrelTunnel:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ../shared/PacketTunnelProvider.swift
+      - path: ../shared/Engine.swift
+    info:
+      path: Tunnel/Info.plist
+      properties:
+        CFBundleDisplayName: Kestrel Tunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: Tunnel/KestrelTunnel.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel.tunnel
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../shared/Geph.h
+        # the universal (arm64 + x86_64) static engine, linked by path
+        OTHER_LDFLAGS: [$(SRCROOT)/../../target/universal-apple-darwin/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+  EngineTests:
+    # Runs the Mac engine and sends real packets through the exit; also
+    # renders the screens to PNGs for review.
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ../shared/Tests
+      - path: Tests
+      - path: ../shared/Engine.swift
+      - path: ../shared/TunnelModel.swift
+      - path: ../shared/DeviceKey.swift
+      - path: ../shared/Theme.swift
+      - path: App/MacViews.swift
+      - path: App/MacSupport.swift
+      - path: ../shared/Fonts
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel.enginetests
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../shared/Geph.h
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        OTHER_LDFLAGS: [$(SRCROOT)/../../target/universal-apple-darwin/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+schemes:
+  Kestrel:
+    build:
+      targets:
+        Kestrel: all
+        KestrelTunnel: all
+    archive:
+      config: Release
+  EngineTests:
+    build:
+      targets:
+        EngineTests: [test]
+    test:
+      config: Release
+      targets: [EngineTests]

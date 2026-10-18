@@ -334,6 +334,32 @@ final class TunnelModel: ObservableObject {
     }
     #endif
 
+    enum SampleState: String { case welcome, off, connected }
+
+    /// Fills the model with labelled sample data instead of the real VPN
+    /// (screenshots and previews only; the app does this when launched with
+    /// -KestrelSample <state>).
+    func applySample(_ state: SampleState) {
+        loaded = true
+        device = state == .welcome ? nil : Sample.device
+        trustedNetworks = ["Home 5G", "Studio"]
+        onDemand = true
+        if state == .connected {
+            status = .connected
+            connectedSince = Calendar.current.date(bySettingHour: 9, minute: 41, second: 0, of: Date())
+            publicIP = "203.0.113.7"
+            report = Sample.report
+        } else {
+            status = .disconnected
+        }
+    }
+
+    static var launchSample: SampleState? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-KestrelSample"), i + 1 < args.count else { return nil }
+        return SampleState(rawValue: args[i + 1])
+    }
+
     func forget() async {
         guard let m = manager else { return }
         m.connection.stopVPNTunnel()
