@@ -67,8 +67,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel.tunnel
         SWIFT_OBJC_BRIDGING_HEADER: Tunnel/Geph.h
-        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/aarch64-apple-ios/release
-        OTHER_LDFLAGS: [-lgeph5_client, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+        # Link the static archive by path: a -l search also finds the cdylib
+        # and prefers it, leaving the extension needing a library iOS can't load.
+        OTHER_LDFLAGS: [$(SRCROOT)/../../target/aarch64-apple-ios/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
         DEAD_CODE_STRIPPING: YES
   EngineTests:
     # Runs the iOS engine in the Simulator and sends real packets through the exit.
@@ -84,9 +85,9 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Tunnel/Geph.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: NO
-        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/../../target/aarch64-apple-ios-sim/release
-        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(SRCROOT)/../../target/aarch64-apple-ios/release
-        OTHER_LDFLAGS: [-lgeph5_client, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: YES
+        OTHER_LDFLAGS: [$(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
 schemes:
   Kestrel:
     build:
