@@ -38,6 +38,9 @@ cfg["socks5_listen"] = f"127.0.0.1:{sys.argv[2]}"
 cfg["http_proxy_listen"] = None
 cfg["pac_listen"] = None
 cfg["control_listen"] = f"127.0.0.1:{sys.argv[3]}"
+# as the apps do: local and LAN addresses go through the exit too, so the
+# loopback and private-address checks below test the exit, not this client
+cfg["allow_lan"] = False
 print(yaml.safe_dump(cfg))
 PY
   "$CLIENT" --config "$WORK/$name.run.yaml" > "$WORK/$name.log" 2>&1 &
@@ -319,20 +322,29 @@ if [[ "${1:-}" != "--live" ]]; then
     sed -e "s#^signing_secret: .*#signing_secret: $WORK/$X.key#" -e "s#^c2e_listen: .*#c2e_listen: 127.0.0.1:${XPORT[$X]}#" \
         -e "s#^b2e_listen: .*#b2e_listen: 127.0.0.1:$(free_port)#" -e "s#^city: .*#city: $X#" \
         -e "s#^kestrel_status: .*#kestrel_status: $WORK/status-$X.json#" "$WORK/exit.yaml" > "$WORK/exit-$X.yaml"
-    "$BIN/geph5-exit" --config "$WORK/exit-$X.yaml" > "$WORK/exit-$X.log" 2>&1 &
-    XPID[$X]=$!; PIDS+=(${XPID[$X]})
     [[ $X == Bravo ]] && sep="" || sep=","
     echo "{\"endpoint\": \"127.0.0.1:${XPORT[$X]}\", \"pubkey\": \"$("$CTL" --signing-secret "$WORK/$X.key" pubkey)\", \"city\": \"$X\"}$sep" >> "$WORK/exits.json"
   done
   echo "]" >> "$WORK/exits.json"
-  sleep 2
   "$CTL" --devices "$DEVICES" --signing-secret "$WORK/Alpha.key" --endpoint "127.0.0.1:${XPORT[Alpha]}" --exits "$WORK/exits.json" \
     add twoexits --out "$WORK/twoexits.yaml" >/dev/null || bad "kestrelctl could not make a two-exit config"
   grep -q "city: Bravo" "$WORK/twoexits.yaml" && ok "a new device's config lists both exits" || bad "config lacks the exit list"
+  # every exit tells devices the list, so devices set up before a new exit learn it
+  for X in Alpha Bravo; do
+    echo "kestrel_exits: $WORK/exits.json" >> "$WORK/exit-$X.yaml"
+    "$BIN/geph5-exit" --config "$WORK/exit-$X.yaml" > "$WORK/exit-$X.log" 2>&1 &
+    XPID[$X]=$!; PIDS+=(${XPID[$X]})
+  done
+  sleep 2
   TWO=$(start_client twoexits "$WORK/twoexits.yaml")
   expect_works "a device with two exits connects" "$TWO"
   FIRST=$(field "$(ask "$TWO" status)" 'd["exit"]["city"]')
   [[ $FIRST == Alpha || $FIRST == Bravo ]] && ok "automatic mode picked $FIRST" || bad "no exit city in the report ($FIRST)"
+  [[ $(field "$(ask "$TWO" status)" 'sorted(x["city"] for x in d["exits"])') == "['Alpha', 'Bravo']" ]] \
+    && ok "the exit tells the device about both exits" || bad "the report does not list both exits"
+  # an old-style config (one exit) still connects, and learns the list from its report
+  P=$(start_client oneexit "$WORK/probe.yaml")
+  [[ $(field "$(ask "$P" status)" 'len(d["exits"])') == 0 ]] && ok "the main test exit (no list set) reports no exits" || bad "unexpected exit list on the main test exit"
   if [[ $FIRST == Alpha || $FIRST == Bravo ]]; then
     OTHER=$([[ $FIRST == Alpha ]] && echo Bravo || echo Alpha)
     # frozen, not killed: connections stay open but nothing answers (a hung or cut-off exit)

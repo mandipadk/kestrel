@@ -157,6 +157,12 @@ struct ConfigFile {
     /// every device's app uses the quantum-safe one (the page shows which).
     #[serde(default)]
     kestrel_require_pq: bool,
+
+    /// Kestrel: all of the owner's exits (JSON list of {endpoint, pubkey,
+    /// city}). Devices learn it from their report, through the tunnel, so a
+    /// new exit reaches devices set up before it existed.
+    #[serde(default)]
+    kestrel_exits: Option<std::path::PathBuf>,
 }
 
 fn default_true() -> bool {
