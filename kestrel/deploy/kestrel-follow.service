@@ -1,0 +1,10 @@
+[Unit]
+Description=Kestrel: run Frankfurt's release here, after testing it, or roll back
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/kestrel-exit/kestrel/follow.sh
+TimeoutStartSec=1800

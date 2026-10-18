@@ -1,0 +1,10 @@
+[Unit]
+Description=Kestrel: follow Frankfurt's release daily, an hour after its upstream sync
+
+[Timer]
+OnCalendar=*-*-* 05:40:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

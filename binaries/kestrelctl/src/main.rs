@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use ed25519_dalek::SigningKey;
-use geph5_misc_rpc::kestrel::KestrelDevice;
+use geph5_misc_rpc::kestrel::{KestrelDevice, KestrelExit};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
@@ -26,6 +26,10 @@ struct Args {
     /// The address devices dial, host:port.
     #[arg(long, env = "KESTREL_ENDPOINT", default_value = "92.5.139.56:443")]
     endpoint: String,
+    /// All of the owner's exits (JSON list of {endpoint, pubkey, city}). When
+    /// it exists, new configs carry every exit and the apps choose between them.
+    #[arg(long, env = "KESTREL_EXITS", default_value = "/etc/kestrel/exits.json")]
+    exits: PathBuf,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -179,7 +183,38 @@ fn today() -> String {
         .unwrap_or_default()
 }
 
+/// The owner's exits from `--exits`, or none if that file doesn't exist. This
+/// exit must be in the list, with its own public key.
+fn read_exits(args: &Args) -> anyhow::Result<Vec<KestrelExit>> {
+    let raw = match fs::read(&args.exits) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e).context("cannot read the exit list"),
+    };
+    let exits: Vec<KestrelExit> =
+        serde_json::from_slice(&raw).context("the exit list is not valid")?;
+    let me = exit_pubkey(&args.signing_secret)?;
+    anyhow::ensure!(
+        exits.iter().any(|e| e.pubkey == me),
+        "this exit's public key is not in {}",
+        args.exits.display()
+    );
+    for e in &exits {
+        anyhow::ensure!(
+            e.pubkey.len() == 64
+                && hex::decode(&e.pubkey).is_ok()
+                && e.endpoint.contains(':')
+                && !e.city.is_empty(),
+            "bad entry in the exit list: {e:?}"
+        );
+    }
+    Ok(exits)
+}
+
 fn client_config(args: &Args, device: &KestrelDevice) -> anyhow::Result<String> {
+    let mut device = device.clone();
+    device.exits = read_exits(args)?;
+    let device = &device;
     let cfg = serde_json::json!({
         "socks5_listen": "127.0.0.1:9909",
         "http_proxy_listen": "127.0.0.1:9910",

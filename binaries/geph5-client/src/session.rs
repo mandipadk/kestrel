@@ -58,6 +58,8 @@ struct ConnectedSession {
     accounting: BwAccountingHandle,
     pending_opens: AtomicUsize,
     early_dead: Arc<ManualResetEvent>,
+    /// Kestrel: which of the device's exits this session is on.
+    exit_idx: Option<usize>,
 }
 
 static CURRENT_SESSIONS: CtxField<parking_lot::Mutex<Slab<Arc<ConnectedSession>>>> =
@@ -168,6 +170,12 @@ fn select_session(ctx: &AnyCtx<Config>) -> Option<Arc<ConnectedSession>> {
         .lock()
         .iter()
         .filter(|(_, session)| session.mux.is_alive() && !session.early_dead.is_set())
+        // Kestrel: only sessions on the exit in use, so sites see one address
+        .filter(|(_, session)| {
+            session
+                .exit_idx
+                .is_none_or(|i| crate::kestrel_exits::active(ctx) == Some(i))
+        })
         .map(|(_, session)| session.clone())
         .collect::<Vec<_>>();
     if sessions.is_empty() {
@@ -367,6 +375,14 @@ async fn run_session_once(
     timeout_time: Duration,
     failures: &mut f64,
 ) -> anyhow::Result<()> {
+    // Kestrel: a device with an exit list picks (and fails over between) exits
+    if let Some(exits) = crate::kestrel_exits::candidates(ctx) {
+        let (authed_pipe, exit, idx) = crate::kestrel_exits::connect(ctx, exits)
+            .timeout(timeout_time)
+            .await
+            .context("overall dial/mux/auth timeout")??;
+        return run_connected(ctx, worker_id, failures, authed_pipe, exit, Some(idx)).await;
+    }
     let (authed_pipe, exit) = async {
         let (pubkey, exit, raw_dialer) = get_dialer(ctx).await?;
         let start = Instant::now();
@@ -390,7 +406,19 @@ async fn run_session_once(
     .timeout(timeout_time)
     .await
     .context("overall dial/mux/auth timeout")??;
+    run_connected(ctx, worker_id, failures, authed_pipe, exit, None).await
+}
 
+/// Runs an authenticated session until it ends (or, for Kestrel, until the
+/// device moves to another exit).
+async fn run_connected(
+    ctx: &AnyCtx<Config>,
+    worker_id: usize,
+    failures: &mut f64,
+    authed_pipe: impl Pipe,
+    exit: geph5_broker_protocol::ExitDescriptor,
+    exit_idx: Option<usize>,
+) -> anyhow::Result<()> {
     let remote_addr = authed_pipe
         .remote_addr()
         .and_then(|addr| addr.parse::<SocketAddr>().ok());
@@ -413,6 +441,7 @@ async fn run_session_once(
         accounting,
         pending_opens: AtomicUsize::new(0),
         early_dead,
+        exit_idx,
     });
     *failures = 0.0;
 
@@ -430,9 +459,22 @@ async fn run_session_once(
             .remove(connected_info_idx);
         ctx.get(CURRENT_SESSIONS).lock().remove(session_idx);
     });
-    proxy_loop(ctx.clone(), session, accounting_loop)
-        .await
-        .context(format!("inner connection to {addr} failed"))
+    let proxied = async {
+        proxy_loop(ctx.clone(), session, accounting_loop)
+            .await
+            .context(format!("inner connection to {addr} failed"))
+    };
+    match exit_idx {
+        Some(idx) => {
+            let moved = async {
+                crate::kestrel_exits::until_switched_from(ctx, idx).await;
+                tracing::info!(worker_id, "closing a session on the exit we left");
+                anyhow::Ok(())
+            };
+            (proxied, moved).race().await
+        }
+        None => proxied.await,
+    }
 }
 
 fn start_mux(authed_pipe: impl Pipe) -> Arc<PicoMux> {
@@ -477,7 +519,7 @@ async fn proxy_loop(
 }
 
 #[tracing::instrument(skip_all, fields(pubkey = hex::encode(pubkey.as_bytes())))]
-async fn client_auth(
+pub(crate) async fn client_auth(
     ctx: &AnyCtx<Config>,
     mut pipe: impl Pipe,
     pubkey: VerifyingKey,
