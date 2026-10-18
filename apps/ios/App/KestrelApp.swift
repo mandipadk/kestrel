@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct KestrelApp: App {
     @StateObject private var model = TunnelModel()
+    @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
@@ -10,27 +11,26 @@ struct KestrelApp: App {
                 .environmentObject(model)
                 .preferredColorScheme(.dark)
                 .task { await model.load() }
+                // a kestrel1: link opened from the Kestrel page sets this iPhone up
+                .onOpenURL { url in
+                    let code = url.absoluteString
+                    guard let key = DeviceKey.parse(code) else {
+                        model.error = DeviceKey.decode(code).failureMessage
+                        return
+                    }
+                    Task { await model.install(key, raw: code) }
+                }
+                .onChange(of: phase) { phase in
+                    if phase == .active { Task { await model.refreshReport() } }
+                }
         }
     }
 }
 
-enum Ink {
-    static let bg = Color.black
-    static let raise = Color(white: 0.07)
-    static let line = Color(white: 0.13)
-    static let ink = Color(white: 0.96)
-    static let muted = Color(white: 0.56)
-    static let faint = Color(white: 0.36)
-    static let accent = Color(red: 0.878, green: 0.482, blue: 0.271) // kestrel rufous
-    static let danger = Color(red: 1.0, green: 0.42, blue: 0.37)
-}
-
-extension Font {
-    static func geist(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .custom("Geist", size: size).weight(weight)
-    }
-    static func geistMono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .custom("Geist Mono", size: size).weight(weight)
+extension Result where Failure == SetupCodeError {
+    var failureMessage: String? {
+        if case .failure(let problem) = self { return problem.message }
+        return nil
     }
 }
 

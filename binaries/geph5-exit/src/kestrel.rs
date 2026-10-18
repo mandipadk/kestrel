@@ -267,6 +267,13 @@ pub fn alert_revoked_key(device: String, ip: Option<IpAddr>) {
 }
 
 async fn network_of(ip: IpAddr) -> (u32, String) {
+    let local = match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local(),
+    };
+    if local {
+        return (0, String::new());
+    }
     match geph5_ip_to_asn::ip_to_asn_country(ip).await {
         Ok((asn, country)) => (asn, country),
         Err(err) => {
