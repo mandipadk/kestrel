@@ -45,6 +45,14 @@ No Geph broker, no Geph account, no paid plan.
   `.github/workflows/apple.yml` builds both, tests the engine against the live exit, keeps
   screenshots of every screen, and runs `apps/mac/check-extension.sh` on the built app and on
   the stapled disk image, so an extension macOS would refuse never gets published.
+- **Mac updates.** The Mac app updates itself with Sparkle (pinned in `apps/mac/project.yml`).
+  CI signs each `.dmg` and the appcast itself with the EdDSA key in the `SPARKLE_ED_KEY` secret
+  (backup: `~/.config/kestrel/sparkle` on Chicago); the app trusts only the matching
+  `SUPublicEDKey` and requires a signed feed. Each build gets its own `mac-b<N>` release; before
+  `mac-latest` (dmg + `appcast.xml`) moves to it, `apps/mac/test-update.sh` updates an older copy
+  on the runner with sparkle-cli and checks a tampered feed is refused. `check-update.sh` checks
+  the embedded framework, signatures and plist keys. The page's Apps section downloads the
+  latest `.dmg` from `/download/mac`, no device needed.
 
 Not built yet, worth doing: a second exit in Chicago with a switcher in the apps (needs root
 there and an Oracle ingress rule).

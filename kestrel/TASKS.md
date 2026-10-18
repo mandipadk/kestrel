@@ -40,3 +40,10 @@ Picked (research notes in kestrel/README.md "What Kestrel adds"):
 Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] OWNER: Mac app refused to install its extension ("does not appear to belong to any extension categories"): extension Info.plist had no CFBundlePackageType; now SYSX (sysextd's "package type not `SYSX`" check, found on the runner). CI gate apps/mac/check-extension.sh checks package type, provider class, Mach service, entitlements, profiles, signatures, on the export and the stapled dmg
 - [x] OWNER: Mac app looked like an iPhone app. Now a menu bar app (LSUIElement): Control Center style panel, setup window only until added, tabbed Settings; system font, native controls, kestrel accent; macOS 14+. Mockup: https://kestrel-mac-mockup.mandip.dev
+
+## Round 3 (2026-10-18): Mac download and in-app updates
+- [x] Page: Apps section with a direct Mac .dmg download (/download/mac) and the version from the appcast; no device needed
+- [x] Sparkle EdDSA key made; private half in gh secret SPARKLE_ED_KEY (owner allowed), backup ~/.config/kestrel/sparkle on Chicago
+- [x] Mac 1.2: Sparkle 2.10.0, signed feed required; Check for Updates in the panel, update settings in General, a quiet "ready" notice for scheduled finds
+- [ ] CI: sign dmg + feed, stage mac-b<N>, update test (old copy -> new; tampered feed refused), then mac-latest; keep 5 builds
+- [ ] OWNER: install 1.2 once by hand (1.1 has no updater); after that it updates itself
