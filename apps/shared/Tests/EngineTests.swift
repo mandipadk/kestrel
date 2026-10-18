@@ -62,7 +62,15 @@ final class EngineTests: XCTestCase {
         }
         XCTAssertEqual(parsed.device, key.name)
         XCTAssertTrue(parsed.stealth, "the engine should reach the exit over the stealth link")
-        XCTAssertEqual(parsed.exitCity, "Frankfurt")
+        XCTAssertTrue(parsed.quantumSafe, "the session keys should come from X25519 and ML-KEM-768")
+        // with the owner's exits the engine picks one; without, it uses the code's one
+        let cities = EngineFixture.exits.map(\.city)
+        if cities.count > 1 {
+            XCTAssertTrue(cities.contains(parsed.exitCity), "on \(parsed.exitCity), not one of \(cities)")
+            XCTAssertEqual(Set(parsed.exits), Set(EngineFixture.exits), "the exit should tell the device every exit")
+        } else {
+            XCTAssertEqual(parsed.exitCity, "Frankfurt")
+        }
         XCTAssertEqual(parsed.shield.hourly.count, 24)
     }
 
@@ -75,6 +83,16 @@ final class EngineTests: XCTestCase {
 
 /// The engine runs once per test process; every test shares it.
 enum EngineFixture {
+    /// The owner's exits (KESTREL_EXITS, the JSON of kestrel/exits.json), so
+    /// the engine runs as an app that knows them all.
+    static let exits: [KestrelExit] = {
+        let raw = ProcessInfo.processInfo.environment["KESTREL_EXITS"] ?? ""
+        let list = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [[String: String]] ?? []
+        return list.compactMap { e in
+            guard let c = e["city"], let ep = e["endpoint"], let k = e["pubkey"] else { return nil }
+            return KestrelExit(c: c, e: ep, k: k)
+        }
+    }()
     private static var started = false
     private static let lock = NSLock()
     private static var replies: [UInt16: (rcode: Int, answers: Int)] = [:]
@@ -92,7 +110,7 @@ enum EngineFixture {
         }
         XCTAssertTrue(key.clientConfig.contains("\"stealth\":true"))
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent("kestrel-test-\(UUID())")
-        let config = try Engine.prepare(configJSON: key.clientConfig, cacheDirectory: cache)
+        let config = try Engine.prepare(configJSON: key.clientConfig(exits: exits, choice: nil), cacheDirectory: cache)
         XCTAssertTrue(config.contains("engine.db"))
         try Engine.start(configJSON: config)
         var state = "unknown"

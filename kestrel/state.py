@@ -27,6 +27,17 @@ def unit(name, *props):
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
 
+def city():
+    try:
+        with open("/etc/kestrel/exit.yaml") as f:
+            for line in f:
+                if line.startswith("city:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return None
+
+
 def allowed():
     try:
         with open(f"{STATE}/shield-allow.txt") as f:
@@ -54,6 +65,7 @@ status = load(f"{STATE}/status.json", {}) or {}
 devices = [d for d in (load(f"{STATE}/devices.json", {}) or {}).get("devices", []) if not d.get("replaced")]
 usage = status.get("devices", {})
 out = {
+    "city": city(),
     "exit": unit("geph-exit", "ActiveState", "SubState", "ActiveEnterTimestamp", "NRestarts", "UnitFileState"),
     "exitStarted": status.get("started"),
     "statusUpdated": status.get("updated"),
@@ -69,8 +81,10 @@ out = {
     "shieldList": list_info(),
     "timers": {
         t: unit(t, "ActiveState", "NextElapseUSecRealtime", "LastTriggerUSec")
-        for t in ("geph-upstream-sync.timer", "geph-security-review.timer")
+        for t in ("geph-upstream-sync.timer", "geph-security-review.timer", "kestrel-follow.timer", "kestrel-devices.timer")
     },
+    # the second exit: following Frankfurt's release
+    "follow": load(f"{STATE}/reports/latest-follow.json"),
     "sync": load(f"{STATE}/reports/latest-sync.json"),
     "review": load(f"{STATE}/reports/latest-review.json"),
     "release": run("readlink", "/opt/kestrel/current").strip().rsplit("/", 1)[-1],
