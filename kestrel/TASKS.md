@@ -28,9 +28,11 @@ Picked (research notes in kestrel/README.md "What Kestrel adds"):
 - [x] Shield: the exit blocks ads, trackers and malware for each device (oisd lists, refreshed daily), answers blocked lookups at once, counts per device (today, top domains); on/off per device
 - [x] Stealth link: devices reach the exit over sosistab3 (looks like random bytes, probes get nothing back) on the same port 443; the exit tells which devices are hidden; old plain clients keep working until switched off
 - [x] Sentinel: the exit notes each device's network (ASN, country) and any revoked or unknown key that tries to connect; the page shows it
-- [ ] Trusted networks: apps connect on their own except on Wi-Fi you mark as trusted
-- [ ] Mac app: SwiftUI app + packet-tunnel extension, menu bar, same look as iPhone; TestFlight for Mac via CI
-- [ ] iPhone: Shield, stealth, trusted networks, setup by link (kestrel1: URL scheme)
+- [x] Trusted networks: apps connect on their own except on Wi-Fi you mark as trusted
+- [x] Mac app: SwiftUI app, menu bar, same look as iPhone; engine tests pass on the macOS runner against the live exit
+- [x] OWNER changed plan: Mac ships as a Developer ID, notarized .dmg (system extension), not TestFlight; CI publishes it to the mac-latest release, the page links it
+- [ ] OWNER: Developer ID .p12 + password (asked via power secret kestrel-developer-id) -> gh secrets MAC_DEVID_P12 / MAC_DEVID_PASSWORD -> first signed, notarized .dmg
+- [x] iPhone: Shield, stealth, trusted networks, setup by link (kestrel1: URL scheme); 1.1 build in TestFlight
 - [x] Status page: Shield report, network per device, Mac setup by code
 - [x] Deploy via sync.sh --deploy-only; lockdown test; README
 Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
