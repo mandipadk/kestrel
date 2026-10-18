@@ -38,76 +38,7 @@ pub async fn get_dialer(
         let (dir, pubkey_hex) = dir
             .split_once('/')
             .context("did not find / in a direct constraint")?;
-        let pubkey = VerifyingKey::from_bytes(
-            hex::decode(pubkey_hex)
-                .context("cannot decode pubkey as hex")?
-                .as_slice()
-                .try_into()
-                .context("pubkey wrong length")?,
-        )?;
-        let dest_addr = *tokio::net::lookup_host(dir)
-            .await?
-            .collect::<Vec<_>>()
-            .choose(&mut rand::rng())
-            .context("could not resolve destination for direct exit connection")?;
-        // Kestrel: a stealth device wraps the link in sosistab3, keyed by the
-        // exit's public key, so the connection looks like random bytes.
-        if ctx
-            .init()
-            .kestrel_device
-            .as_ref()
-            .is_some_and(|d| d.stealth)
-        {
-            let stealth_route = RouteDescriptor::Sosistab3 {
-                cookie: geph5_misc_rpc::kestrel::stealth_cookie(pubkey.as_bytes()),
-                lower: Box::new(RouteDescriptor::Tcp(dest_addr)),
-            };
-            return Ok((
-                pubkey,
-                ExitDescriptor {
-                    c2e_listen: "0.0.0.0:0".parse()?,
-                    b2e_listen: "0.0.0.0:0".parse()?,
-                    country: CountryCode::ABW,
-                    city: "".to_string(),
-                    load: 0.0,
-                    expiry: 0,
-                },
-                route_to_dialer(ctx, &stealth_route),
-            ));
-        }
-        let direct_route = RouteDescriptor::ConnTest {
-            ping_count: 1,
-            lower: Box::new(RouteDescriptor::Tcp(dest_addr)),
-        };
-        return Ok((
-            pubkey,
-            ExitDescriptor {
-                c2e_listen: "0.0.0.0:0".parse()?,
-                b2e_listen: "0.0.0.0:0".parse()?,
-                country: CountryCode::ABW,
-                city: "".to_string(),
-                load: 0.0,
-                expiry: 0,
-            },
-            logged(
-                "overall",
-                route_subtree_json(&direct_route),
-                logged(
-                    "conntest",
-                    route_subtree_json(&direct_route),
-                    ConnTestDialer {
-                        ping_count: 1,
-                        inner: logged(
-                            "tcp",
-                            route_subtree_json(&RouteDescriptor::Tcp(dest_addr)),
-                            BoundTcpDialer { dest_addr },
-                        )
-                        .dynamic(),
-                    },
-                ),
-            )
-            .dynamic(),
-        ));
+        return direct_dialer(ctx, dir, pubkey_hex, "").await;
     }
 
     if let Some(cached) = read_cached_exit_route(ctx, &ctx.init().exit_constraint).await?
@@ -497,4 +428,84 @@ mod tests {
         assert!(!exit_route_is_unexpired(&sample_exit_route(now)));
         assert!(!exit_route_is_unexpired(&sample_exit_route(now - 1)));
     }
+}
+
+/// A dialer straight to one exit at `dir` ("host:port") with the given
+/// ed25519 public key (hex). Kestrel calls it for each of the owner's exits.
+pub(crate) async fn direct_dialer(
+    ctx: &AnyCtx<Config>,
+    dir: &str,
+    pubkey_hex: &str,
+    city: &str,
+) -> anyhow::Result<(VerifyingKey, ExitDescriptor, DynDialer)> {
+    let pubkey = VerifyingKey::from_bytes(
+        hex::decode(pubkey_hex)
+            .context("cannot decode pubkey as hex")?
+            .as_slice()
+            .try_into()
+            .context("pubkey wrong length")?,
+    )?;
+    let dest_addr = *tokio::net::lookup_host(dir)
+        .await?
+        .collect::<Vec<_>>()
+        .choose(&mut rand::rng())
+        .context("could not resolve destination for direct exit connection")?;
+    // Kestrel: a stealth device wraps the link in sosistab3, keyed by the
+    // exit's public key, so the connection looks like random bytes.
+    if ctx
+        .init()
+        .kestrel_device
+        .as_ref()
+        .is_some_and(|d| d.stealth)
+    {
+        let stealth_route = RouteDescriptor::Sosistab3 {
+            cookie: geph5_misc_rpc::kestrel::stealth_cookie(pubkey.as_bytes()),
+            lower: Box::new(RouteDescriptor::Tcp(dest_addr)),
+        };
+        return Ok((
+            pubkey,
+            ExitDescriptor {
+                c2e_listen: "0.0.0.0:0".parse()?,
+                b2e_listen: "0.0.0.0:0".parse()?,
+                country: CountryCode::ABW,
+                city: city.to_string(),
+                load: 0.0,
+                expiry: 0,
+            },
+            route_to_dialer(ctx, &stealth_route),
+        ));
+    }
+    let direct_route = RouteDescriptor::ConnTest {
+        ping_count: 1,
+        lower: Box::new(RouteDescriptor::Tcp(dest_addr)),
+    };
+    return Ok((
+        pubkey,
+        ExitDescriptor {
+            c2e_listen: "0.0.0.0:0".parse()?,
+            b2e_listen: "0.0.0.0:0".parse()?,
+            country: CountryCode::ABW,
+            city: city.to_string(),
+            load: 0.0,
+            expiry: 0,
+        },
+        logged(
+            "overall",
+            route_subtree_json(&direct_route),
+            logged(
+                "conntest",
+                route_subtree_json(&direct_route),
+                ConnTestDialer {
+                    ping_count: 1,
+                    inner: logged(
+                        "tcp",
+                        route_subtree_json(&RouteDescriptor::Tcp(dest_addr)),
+                        BoundTcpDialer { dest_addr },
+                    )
+                    .dynamic(),
+                },
+            ),
+        )
+        .dynamic(),
+    ));
 }

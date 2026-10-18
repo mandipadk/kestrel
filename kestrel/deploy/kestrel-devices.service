@@ -1,0 +1,9 @@
+[Unit]
+Description=Kestrel: copy the device list from Frankfurt
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/kestrel-exit/kestrel/pull-devices.sh
+TimeoutStartSec=60
