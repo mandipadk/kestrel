@@ -23,7 +23,7 @@ struct WelcomeView: View {
                 .foregroundStyle(Ink.muted)
                 .padding(.top, 16)
             Spacer()
-            if let message {
+            if let message = message ?? model.error {
                 Text(message)
                     .font(.geist(14))
                     .foregroundStyle(Ink.danger)
@@ -70,9 +70,6 @@ struct HomeView: View {
     @EnvironmentObject var model: TunnelModel
     @State private var showSettings = false
 
-    private var on: Bool { model.status == .connected }
-    private var busy: Bool { [.connecting, .disconnecting, .reasserting].contains(model.status) }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -88,62 +85,57 @@ struct HomeView: View {
             }
             .padding(.top, 8)
 
-            Spacer()
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 12) {
+                        StatusDot(state: model.dotState)
+                        Text(model.statusWord)
+                            .font(.geist(40, .semibold))
+                            .tracking(-1.4)
+                            .contentTransition(.opacity)
+                    }
+                    .animation(.easeOut(duration: 0.2), value: model.statusWord)
+                    Text(model.statusLine)
+                        .font(.geist(16))
+                        .foregroundStyle(Ink.muted)
+                        .padding(.top, 8)
 
-            HStack(spacing: 12) {
-                StatusDot(state: on ? .live : busy ? .busy : .off)
-                Text(statusWord)
-                    .font(.geist(40, .semibold))
-                    .tracking(-1.4)
-                    .contentTransition(.opacity)
+                    VStack(spacing: 0) {
+                        FactRow(label: "Seen as", value: model.publicIP ?? (model.isOn ? "checking…" : "your own address"), mono: model.publicIP != nil)
+                        FactRow(label: "Exit", value: "Frankfurt", mono: false)
+                        FactRow(label: "Link", value: model.linkDescription, mono: false)
+                    }
+                    .padding(.top, 32)
+
+                    ShieldPanel(shield: model.report?.shield, connected: model.isOn) { paused in
+                        Task { await model.setShieldPaused(paused) }
+                    }
+                    .padding(.top, 24)
+                    .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
+                    .padding(.top, 8)
+                }
+                .padding(.top, 40)
+                .padding(.bottom, 24)
             }
-            .animation(.easeOut(duration: 0.2), value: statusWord)
-            Text(statusLine)
-                .font(.geist(16))
-                .foregroundStyle(Ink.muted)
-                .padding(.top, 8)
-
-            VStack(spacing: 0) {
-                FactRow(label: "Seen as", value: model.publicIP ?? (on ? "checking…" : "your own address"), mono: model.publicIP != nil)
-                FactRow(label: "Exit", value: "Frankfurt · \(model.device?.endpoint ?? "")", mono: false)
-                FactRow(label: "This device", value: model.device?.name ?? "", mono: true)
-            }
-            .padding(.top, 32)
-
-            Spacer()
+            .refreshable { await model.refreshReport() }
 
             if let err = model.error {
                 Text(err).font(.geist(14)).foregroundStyle(Ink.danger).padding(.bottom, 16)
             }
-            PrimaryButton(title: on || busy ? "Disconnect" : "Connect",
-                          systemImage: on || busy ? "stop.fill" : "power",
-                          inverted: on || busy) {
+            PrimaryButton(title: model.isOn || model.isBusy ? "Disconnect" : "Connect",
+                          systemImage: model.isOn || model.isBusy ? "stop.fill" : "power",
+                          inverted: model.isOn || model.isBusy) {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 Task { await model.toggle() }
             }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
-        .sheet(isPresented: $showSettings) { SettingsSheet().presentationDetents([.medium]) }
-    }
-
-    private var statusWord: String {
-        switch model.status {
-        case .connected: return "Connected"
-        case .connecting: return "Connecting"
-        case .reasserting: return "Reconnecting"
-        case .disconnecting: return "Stopping"
-        default: return "Off"
-        }
-    }
-
-    private var statusLine: String {
-        if let since = model.connectedSince, on {
-            return "Private since \(since.formatted(date: .omitted, time: .shortened))."
-        }
-        return busy ? "Talking to Frankfurt…" : "Your traffic goes the usual way."
+        .sheet(isPresented: $showSettings) { SettingsSheet().presentationDetents([.large]) }
     }
 }
+
+// MARK: - Settings
 
 struct SettingsSheet: View {
     @EnvironmentObject var model: TunnelModel
@@ -151,74 +143,57 @@ struct SettingsSheet: View {
     @State private var confirmForget = false
     @State private var report = ""
     @State private var showReport = false
+    @State private var newNetwork = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Settings").font(.geist(22, .semibold)).tracking(-0.6).padding(.bottom, 24)
-            Toggle(isOn: Binding(get: { model.onDemand }, set: { v in Task { await model.setOnDemand(v) } })) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Stay connected").font(.geist(16, .medium))
-                    Text("Reconnect on its own whenever the network changes.").font(.geist(14)).foregroundStyle(Ink.muted)
-                }
-            }
-            .tint(Ink.accent)
-            .padding(.vertical, 12)
-            Divider().overlay(Ink.line)
-            Button {
-                Task {
-                    report = await model.engineReport()
-                    showReport = true
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "waveform.path.ecg")
-                    Text("Connection details").font(.geist(16, .medium))
-                    Spacer()
-                    Image(systemName: "chevron.right").foregroundStyle(Ink.faint)
-                }
-                .foregroundStyle(Ink.ink)
-                .frame(minHeight: 52)
-            }
-            Divider().overlay(Ink.line)
-            Button(role: .destructive) { confirmForget = true } label: {
-                HStack {
-                    Image(systemName: "key.slash")
-                    Text("Remove the key from this iPhone").font(.geist(16, .medium))
-                    Spacer()
-                }
-                .foregroundStyle(Ink.danger)
-                .frame(minHeight: 52)
-            }
-            Text("To shut this iPhone out completely, revoke it on the Kestrel page too.")
-                .font(.geist(14)).foregroundStyle(Ink.muted)
-            Spacer()
-        }
-        .padding(24)
-        .background(Ink.raise.ignoresSafeArea())
-        .sheet(isPresented: $showReport) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Connection details").font(.geist(22, .semibold)).tracking(-0.6)
-                    Spacer()
-                    Button {
-                        UIPasteboard.general.string = report
-                    } label: {
-                        Image(systemName: "doc.on.doc").frame(width: 44, height: 44)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Settings").font(.geist(22, .semibold)).tracking(-0.6).padding(.bottom, 24)
+
+                Toggle(isOn: Binding(get: { model.onDemand }, set: { v in Task { await model.setOnDemand(v) } })) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Connect automatically").font(.geist(16, .medium))
+                        Text("Kestrel comes on by itself on any network, except Wi-Fi you trust.").font(.geist(14)).foregroundStyle(Ink.muted)
                     }
-                    .accessibilityLabel("Copy")
                 }
-                ScrollView {
-                    Text(report)
-                        .font(.geistMono(12))
-                        .foregroundStyle(Ink.muted)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                .tint(Ink.accent)
+                .padding(.vertical, 12)
+
+                TrustedNetworks()
+                    .padding(.bottom, 8)
+
+                Divider().overlay(Ink.line)
+                SettingsRow(icon: "waveform.path.ecg", title: "Connection details") {
+                    Task {
+                        report = await model.engineReport()
+                        showReport = true
+                    }
                 }
+                Divider().overlay(Ink.line)
+                HStack {
+                    Image(systemName: "iphone")
+                    Text("This device").font(.geist(16, .medium))
+                    Spacer()
+                    Text(model.device?.name ?? "").font(.geistMono(14)).foregroundStyle(Ink.muted)
+                }
+                .frame(minHeight: 52)
+                Divider().overlay(Ink.line)
+                Button(role: .destructive) { confirmForget = true } label: {
+                    HStack {
+                        Image(systemName: "key.slash")
+                        Text("Remove the key from this iPhone").font(.geist(16, .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(Ink.danger)
+                    .frame(minHeight: 52)
+                }
+                Text("To shut this iPhone out completely, revoke it on the Kestrel page too.")
+                    .font(.geist(14)).foregroundStyle(Ink.muted)
             }
             .padding(24)
-            .background(Ink.raise.ignoresSafeArea())
-            .foregroundStyle(Ink.ink)
         }
+        .background(Ink.raise.ignoresSafeArea())
+        .sheet(isPresented: $showReport) { ReportSheet(report: report) }
         .confirmationDialog("Remove the key?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { Task { await model.forget(); dismiss() } }
         } message: {
@@ -227,95 +202,120 @@ struct SettingsSheet: View {
     }
 }
 
-// MARK: - Pieces
+/// The Wi-Fi networks where Kestrel stays off when connecting automatically.
+struct TrustedNetworks: View {
+    @EnvironmentObject var model: TunnelModel
+    @State private var adding = false
+    @State private var name = ""
+    @FocusState private var focused: Bool
 
-struct Wordmark: View {
     var body: some View {
-        HStack(spacing: 10) {
-            KestrelMark().frame(width: 24, height: 24)
-            Text("Kestrel").font(.geist(17, .semibold)).tracking(-0.3)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Trusted Wi-Fi").font(.geist(13, .medium)).foregroundStyle(Ink.muted).padding(.top, 8)
+            ForEach(model.trustedNetworks, id: \.self) { network in
+                HStack {
+                    Image(systemName: "wifi").foregroundStyle(Ink.muted)
+                    Text(network).font(.geist(16))
+                    Spacer()
+                    Button {
+                        Task { await model.setTrusted(model.trustedNetworks.filter { $0 != network }) }
+                    } label: {
+                        Image(systemName: "minus.circle").foregroundStyle(Ink.muted).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Stop trusting \(network)")
+                }
+                .frame(minHeight: 48)
+                .transition(.opacity)
+            }
+            if adding {
+                HStack {
+                    TextField("Network name", text: $name)
+                        .font(.geist(16))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focused)
+                        .onSubmit(save)
+                    Button("Add", action: save).font(.geist(15, .semibold)).foregroundStyle(Ink.accent)
+                        .frame(minHeight: 44)
+                }
+                .frame(minHeight: 48)
+            } else {
+                Button {
+                    Task {
+                        name = await model.currentNetwork() ?? ""
+                        adding = true
+                        focused = true
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "plus")
+                        Text("Trust a Wi-Fi network").font(.geist(16, .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(Ink.ink)
+                    .frame(minHeight: 48)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: model.trustedNetworks)
+    }
+
+    private func save() {
+        let n = name
+        adding = false
+        name = ""
+        Task { await model.setTrusted(model.trustedNetworks + [n]) }
     }
 }
 
-/// The wing mark from the Kestrel page.
-struct KestrelMark: View {
-    var body: some View {
-        Canvas { ctx, size in
-            let s = size.width / 32
-            ctx.fill(Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 7 * s), with: .color(Color(white: 0.12)))
-            var wing = Path()
-            wing.move(to: CGPoint(x: 6 * s, y: 19.5 * s))
-            wing.addCurve(to: CGPoint(x: 17 * s, y: 11.6 * s), control1: CGPoint(x: 10.5 * s, y: 18.5 * s), control2: CGPoint(x: 14.2 * s, y: 15.9 * s))
-            wing.addLine(to: CGPoint(x: 18.4 * s, y: 15.7 * s))
-            wing.addLine(to: CGPoint(x: 26 * s, y: 10.5 * s))
-            wing.addLine(to: CGPoint(x: 22.8 * s, y: 18.9 * s))
-            wing.addCurve(to: CGPoint(x: 11.5 * s, y: 25 * s), control1: CGPoint(x: 19.2 * s, y: 20 * s), control2: CGPoint(x: 15.4 * s, y: 21.4 * s))
-            wing.addLine(to: CGPoint(x: 11.3 * s, y: 20.9 * s))
-            wing.closeSubpath()
-            ctx.fill(wing, with: .color(.white))
-            ctx.fill(Path(ellipseIn: CGRect(x: 19.5 * s, y: 11.3 * s, width: 2.2 * s, height: 2.2 * s)), with: .color(Ink.accent))
-        }
-    }
-}
-
-enum DotState { case live, busy, off }
-
-struct StatusDot: View {
-    let state: DotState
-    @State private var pulse = false
-
-    var body: some View {
-        Circle()
-            .fill(state == .off ? Ink.faint : Ink.accent)
-            .frame(width: 12, height: 12)
-            .opacity(state == .busy ? (pulse ? 0.35 : 1) : 1)
-            .overlay(
-                Circle().stroke(Ink.accent.opacity(state == .live ? (pulse ? 0 : 0.5) : 0), lineWidth: 1)
-                    .scaleEffect(pulse ? 2.4 : 1)
-            )
-            .onAppear { withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: state == .busy)) { pulse = true } }
-            .id(state)
-    }
-}
-
-struct FactRow: View {
-    let label: String
-    let value: String
-    let mono: Bool
-
-    var body: some View {
-        HStack {
-            Text(label).font(.geist(15)).foregroundStyle(Ink.muted)
-            Spacer()
-            Text(value)
-                .font(mono ? .geistMono(14) : .geist(15))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .frame(minHeight: 52)
-        .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
-    }
-}
-
-struct PrimaryButton: View {
+struct SettingsRow: View {
+    let icon: String
     let title: String
-    let systemImage: String
-    var inverted = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage).font(.system(size: 16, weight: .semibold))
-                Text(title).font(.geist(17, .semibold))
+            HStack {
+                Image(systemName: icon)
+                Text(title).font(.geist(16, .medium))
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(Ink.faint)
             }
-            .frame(maxWidth: .infinity, minHeight: 56)
-            .foregroundStyle(inverted ? Ink.ink : Color.black)
-            .background(inverted ? Ink.raise : Ink.ink, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(inverted ? Ink.line : .clear))
+            .foregroundStyle(Ink.ink)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.2), value: inverted)
+    }
+}
+
+struct ReportSheet: View {
+    let report: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Connection details").font(.geist(22, .semibold)).tracking(-0.6)
+                Spacer()
+                Button {
+                    UIPasteboard.general.string = report
+                } label: {
+                    Image(systemName: "doc.on.doc").frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Copy")
+            }
+            ScrollView {
+                Text(report)
+                    .font(.geistMono(12))
+                    .foregroundStyle(Ink.muted)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(24)
+        .background(Ink.raise.ignoresSafeArea())
+        .foregroundStyle(Ink.ink)
     }
 }
