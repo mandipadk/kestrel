@@ -45,5 +45,5 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] Page: Apps section with a direct Mac .dmg download (/download/mac) and the version from the appcast; no device needed
 - [x] Sparkle EdDSA key made; private half in gh secret SPARKLE_ED_KEY (owner allowed), backup ~/.config/kestrel/sparkle on Chicago
 - [x] Mac 1.2: Sparkle 2.10.0, signed feed required; Check for Updates in the panel, update settings in General, a quiet "ready" notice for scheduled finds
-- [ ] CI: sign dmg + feed, stage mac-b<N>, update test (old copy -> new; tampered feed refused), then mac-latest; keep 5 builds
+- [x] CI: sign dmg + feed, stage mac-b<N>, update test (old copy -> new; tampered feed refused), then mac-latest; keep 5 builds
 - [ ] OWNER: install 1.2 once by hand (1.1 has no updater); after that it updates itself
