@@ -108,7 +108,10 @@ pub fn record_failure(ip: IpAddr) {
     let n = FAILURES.get(&ip).unwrap_or(0) + 1;
     FAILURES.insert(ip, n);
     if n == MAX_FAILURES {
-        tracing::warn!(ip = display(ip), "too many failed handshakes; blocking for 15 minutes");
+        tracing::warn!(
+            ip = display(ip),
+            "too many failed handshakes; blocking for 15 minutes"
+        );
     }
 }
 
@@ -196,7 +199,11 @@ pub fn alert_revoked_key(device: String, ip: Option<IpAddr>) {
         return;
     }
     ALERTED.insert(device.clone(), ());
-    tracing::warn!(device = display(&device), ip = debug(ip), "a revoked key tried to connect");
+    tracing::warn!(
+        device = display(&device),
+        ip = debug(ip),
+        "a revoked key tried to connect"
+    );
     geph5_rt::spawn(async move {
         let (asn, country) = match ip {
             Some(ip) => network_of(ip).await,
@@ -355,7 +362,11 @@ pub async fn status_loop() -> anyhow::Result<()> {
         for entry in USAGE.iter() {
             let u = entry.value();
             let d = devices.entry(entry.key().clone()).or_default();
-            let base = previous.devices.get(entry.key()).cloned().unwrap_or_default();
+            let base = previous
+                .devices
+                .get(entry.key())
+                .cloned()
+                .unwrap_or_default();
             d.bytes_up = base.bytes_up + u.up.load(Ordering::Relaxed);
             d.bytes_down = base.bytes_down + u.down.load(Ordering::Relaxed);
             d.active_sessions = u.sessions.load(Ordering::Relaxed);
