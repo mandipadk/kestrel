@@ -86,6 +86,21 @@ build_and_test() {
   "$K/lockdown-test.sh" target/release
 }
 
+# The apps' packet path on the live exit: real pages and a download through
+# the engine exactly as the iPhone and Mac tunnels drive it, every packet within
+# the tunnel's MTU (see vpn-path-test.py). Tried twice: it loads outside sites.
+vpn_path_test() {
+  step "packet path test (pages through the engine, as the apps run it)"
+  local cfg rc=1
+  cfg=$(mktemp)
+  sudo -n cat /var/lib/kestrel/probe.yaml | sed "s#direct: [^/]*/#direct: 127.0.0.1:443/#" > "$cfg"
+  for _ in 1 2; do
+    sudo -n timeout 300 python3 "$K/vpn-path-test.py" "$PWD/target/release/libgeph5_client.so" "$cfg" && { rc=0; break; }
+  done
+  rm -f "$cfg"
+  return $rc
+}
+
 GOOD_HEAD=$(git rev-parse HEAD)
 DEPLOYED=$(basename "$(readlink -f $OPT/current)")
 
@@ -131,7 +146,7 @@ ln -sfn "releases/$SHA" $OPT/current.new && mv -T $OPT/current.new $OPT/current
 step "restart geph-exit"
 sudo -n /usr/bin/systemctl restart geph-exit
 sleep 4
-if systemctl is-active --quiet geph-exit && "$K/lockdown-test.sh" --live; then
+if systemctl is-active --quiet geph-exit && "$K/lockdown-test.sh" --live && vpn_path_test; then
   ln -sfn "releases/$SHA" $OPT/last-good
   # keep the five newest releases
   ls -1t $OPT/releases | tail -n +6 | while read -r old; do
@@ -140,7 +155,7 @@ if systemctl is-active --quiet geph-exit && "$K/lockdown-test.sh" --live; then
   if [[ $SHA == "$DEPLOYED" ]]; then msg="Redeployed $SHA."; else msg="Deployed $SHA (was $DEPLOYED), on upstream $(git rev-parse --short upstream/master)."; fi
   # keep the private GitHub copy current; its push rebuilds the iPhone and Mac clients
   git push -q --force-with-lease origin kestrel 2>&1 || echo "note: could not push to origin"
-  report ok "$msg Tests and lockdown passed."
+  report ok "$msg Tests, lockdown and page loads through the engine passed."
   echo "$msg"
 else
   echo "live check failed; rolling back to $PREV"

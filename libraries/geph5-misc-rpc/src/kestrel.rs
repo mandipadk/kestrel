@@ -26,6 +26,11 @@ pub struct KestrelDevice {
     /// Reach the exit over sosistab3 instead of plain TCP (see [`stealth_cookie`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stealth: bool,
+    /// The tunnel's MTU on the system side (the apps use 1450). The engine's
+    /// IP stack never sends the system a bigger packet: Apple's packet flow
+    /// drops those. None keeps the engine's per-platform default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vpn_mtu: Option<u16>,
 }
 
 impl KestrelDevice {
@@ -36,6 +41,7 @@ impl KestrelDevice {
             name: name.to_string(),
             secret: hex::encode(key.to_bytes()),
             stealth: true,
+            vpn_mtu: None,
         }
     }
 
