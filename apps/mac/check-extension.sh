@@ -36,7 +36,8 @@ CLASS=$(plist "$INFO" "NetworkExtension:NEProviderClasses:com.apple.networkexten
   || bad "NetworkExtension > NEProviderClasses > com.apple.networkextension.packet-tunnel is '$CLASS', want $PROVIDER"
 MODULE=${PROVIDER%%.*}; NAME=${PROVIDER#*.}
 MANGLED="_TtC${#MODULE}${MODULE}${#NAME}${NAME}"
-if nm -U "$BIN" 2>/dev/null | grep -q "_OBJC_CLASS_\$_$MANGLED"; then ok "binary defines $PROVIDER"
+# release binaries are stripped, but the Objective-C runtime name stays in __objc_classname
+if grep -aq "$MANGLED" "$BIN"; then ok "binary defines $PROVIDER ($MANGLED)"
 else bad "the extension binary has no Objective-C class $MANGLED for $PROVIDER"; fi
 MACH=$(plist "$INFO" NetworkExtension:NEMachServiceName)
 [[ -n "$MACH" ]] && ok "NEMachServiceName $MACH" || bad "no NetworkExtension > NEMachServiceName"
@@ -45,16 +46,17 @@ MACH=$(plist "$INFO" NetworkExtension:NEMachServiceName)
 ents() { codesign -d --entitlements :- "$1" 2>/dev/null > "$2"; }
 ents "$APP" "$TMP/app.plist"
 ents "$EXT" "$TMP/ext.plist"
-has_ne() { plutil -extract com.apple.developer.networking.networkextension json -o - "$1" 2>/dev/null | grep -q "\"$NE\""; }
+# PlistBuddy, since plutil key paths split the dots in entitlement names
+has_ne() { plist "$1" com.apple.developer.networking.networkextension | grep -qx "[[:space:]]*$NE"; }
 for who in app ext; do
   has_ne "$TMP/$who.plist" && ok "$who signed with networkextension = [$NE]" \
     || bad "$who is not signed with com.apple.developer.networking.networkextension = [$NE]"
 done
-[[ $(plutil -extract com.apple.developer.system-extension.install raw -o - "$TMP/app.plist" 2>/dev/null) == true ]] \
+[[ $(plist "$TMP/app.plist" com.apple.developer.system-extension.install) == true ]] \
   && ok "app may install system extensions" || bad "app lacks com.apple.developer.system-extension.install"
-[[ $(plutil -extract com.apple.security.app-sandbox raw -o - "$TMP/ext.plist" 2>/dev/null) == true ]] \
+[[ $(plist "$TMP/ext.plist" com.apple.security.app-sandbox) == true ]] \
   && ok "extension sandboxed" || bad "extension is not sandboxed"
-APP_GROUPS=$(plutil -extract com.apple.security.application-groups json -o - "$TMP/ext.plist" 2>/dev/null | tr -d '[]"' | tr ',' ' ')
+APP_GROUPS=$(plist "$TMP/ext.plist" com.apple.security.application-groups | grep -v '[{}]' | xargs)
 prefixed=0
 for g in $APP_GROUPS; do [[ "$MACH" == "$g"* ]] && prefixed=1; done
 (( prefixed )) && ok "NEMachServiceName is under app group ($APP_GROUPS)" \
@@ -62,7 +64,7 @@ for g in $APP_GROUPS; do [[ "$MACH" == "$g"* ]] && prefixed=1; done
 for who in "$APP" "$EXT"; do
   PROFILE="$who/Contents/embedded.provisionprofile"
   if [[ -f "$PROFILE" ]] && security cms -D -i "$PROFILE" > "$TMP/profile.plist" 2>/dev/null; then
-    plutil -extract Entitlements xml1 -o "$TMP/allowed.plist" "$TMP/profile.plist"
+    /usr/libexec/PlistBuddy -x -c "Print :Entitlements" "$TMP/profile.plist" > "$TMP/allowed.plist"
     has_ne "$TMP/allowed.plist" && ok "$(basename "$who") profile allows $NE" \
       || bad "$(basename "$who")'s provisioning profile does not allow $NE"
   else
