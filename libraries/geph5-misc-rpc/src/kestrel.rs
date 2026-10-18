@@ -35,6 +35,25 @@ pub struct KestrelDevice {
     /// (X25519 alone), to prove exits still serve, or refuse, such apps.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub classical_handshake: bool,
+    /// All of the owner's exits this device may use. Empty: only the one in
+    /// `exit_constraint` (devices set up before there were two).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exits: Vec<KestrelExit>,
+    /// The city of the exit to stay on. None: automatic (the fastest exit at
+    /// connect time, and whichever answers if it stops).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_choice: Option<String>,
+}
+
+/// One of the owner's exits, as a device knows it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct KestrelExit {
+    /// "host:port"
+    pub endpoint: String,
+    /// The exit's ed25519 public key, hex-encoded.
+    pub pubkey: String,
+    /// Shown in the apps, e.g. "Chicago".
+    pub city: String,
 }
 
 impl KestrelDevice {
@@ -47,6 +66,8 @@ impl KestrelDevice {
             stealth: true,
             vpn_mtu: None,
             classical_handshake: false,
+            exits: Vec::new(),
+            exit_choice: None,
         }
     }
 

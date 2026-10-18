@@ -17,7 +17,8 @@ bad()  { echo "  FAIL  $*"; FAIL=$((FAIL + 1)); }
 WORK=$(mktemp -d /tmp/kestrel-lockdown.XXXXXX)
 PIDS=()
 cleanup() {
-  for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
+  # a frozen test exit (the failover check) only dies once it is let go
+  for p in "${PIDS[@]}"; do kill -CONT "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
   pkill -f "$WORK/" 2>/dev/null
   wait 2>/dev/null
   [[ -n ${KEEP:-} ]] && echo "kept $WORK" || rm -rf "$WORK"
@@ -85,7 +86,8 @@ if [[ "${1:-}" == "--live" ]]; then
     "$CTL" --devices "$DEVICES" --signing-secret "$SECRET" --endpoint "$ENDPOINT" rotate lockdown-probe --out "$PROBE" >/dev/null 2>&1 \
       || make_config lockdown-probe "$PROBE"
   fi
-  sed "s#direct: .*/#direct: $ENDPOINT/#" "$PROBE" > "$WORK/probe.yaml"
+  # this exit's own key (on the second exit it differs from the one the probe was made with)
+  sed "s#direct: .*#direct: $ENDPOINT/$("$CTL" --signing-secret "$SECRET" pubkey)#" "$PROBE" > "$WORK/probe.yaml"
 else
   BIN=${1:?usage: lockdown-test.sh <bin-dir> | --live}
   CLIENT=$BIN/geph5-client
@@ -139,6 +141,25 @@ if curl -sS --max-time 8 --socks5-hostname "127.0.0.1:$P" telnet://127.0.0.1:22 
 else
   ok "loopback and private addresses are unreachable through the exit"
 fi
+# every service listening on this host's loopback, not just SSH
+leaked=""
+for lport in $(ss -Htln | awk '{print $4}' | grep -E '^(127\.[0-9.]+|0\.0\.0\.0|\*):[0-9]+$' | sed 's/.*://' | sort -un | head -40); do
+  # leaked if anything at all answers a request sent through the tunnel
+  if python3 - "$P" "$lport" <<PY
+import socket, struct, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=6)
+s.sendall(b"\x05\x01\x00"); s.recv(2)
+s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", int(sys.argv[2])))
+try:
+    s.recv(10)
+    s.sendall(b"GET / HTTP/1.0\r\n\r\n")
+    sys.exit(0 if s.recv(1) else 1)
+except OSError:
+    sys.exit(1)
+PY
+  then leaked+=" $lport"; fi
+done
+[[ -z $leaked ]] && ok "no service on this host's loopback is reachable through the exit" || bad "loopback ports reachable through the exit:$leaked"
 if curl -sS --max-time 10 --socks5-hostname "127.0.0.1:$P" telnet://smtp.gmail.com:587 </dev/null 2>&1 | grep -qi "220"; then
   bad "SMTP submission reachable"
 else
@@ -288,6 +309,57 @@ if [[ "${1:-}" != "--live" ]]; then
   expect_works "a quantum-safe-only exit serves quantum-safe apps" "$P"
   P=$(start_client classicalonly "$WORK/classical-only.cfg")
   expect_refused "a quantum-safe-only exit refuses classical apps" "$P"
+
+  # 13. two exits: automatic picks one, keeps working when it dies, a pin is honoured
+  declare -A XPORT XPID
+  echo "[" > "$WORK/exits.json"
+  for X in Alpha Bravo; do
+    head -c 32 /dev/urandom > "$WORK/$X.key"
+    XPORT[$X]=$(free_port)
+    sed -e "s#^signing_secret: .*#signing_secret: $WORK/$X.key#" -e "s#^c2e_listen: .*#c2e_listen: 127.0.0.1:${XPORT[$X]}#" \
+        -e "s#^b2e_listen: .*#b2e_listen: 127.0.0.1:$(free_port)#" -e "s#^city: .*#city: $X#" \
+        -e "s#^kestrel_status: .*#kestrel_status: $WORK/status-$X.json#" "$WORK/exit.yaml" > "$WORK/exit-$X.yaml"
+    "$BIN/geph5-exit" --config "$WORK/exit-$X.yaml" > "$WORK/exit-$X.log" 2>&1 &
+    XPID[$X]=$!; PIDS+=(${XPID[$X]})
+    [[ $X == Bravo ]] && sep="" || sep=","
+    echo "{\"endpoint\": \"127.0.0.1:${XPORT[$X]}\", \"pubkey\": \"$("$CTL" --signing-secret "$WORK/$X.key" pubkey)\", \"city\": \"$X\"}$sep" >> "$WORK/exits.json"
+  done
+  echo "]" >> "$WORK/exits.json"
+  sleep 2
+  "$CTL" --devices "$DEVICES" --signing-secret "$WORK/Alpha.key" --endpoint "127.0.0.1:${XPORT[Alpha]}" --exits "$WORK/exits.json" \
+    add twoexits --out "$WORK/twoexits.yaml" >/dev/null || bad "kestrelctl could not make a two-exit config"
+  grep -q "city: Bravo" "$WORK/twoexits.yaml" && ok "a new device's config lists both exits" || bad "config lacks the exit list"
+  TWO=$(start_client twoexits "$WORK/twoexits.yaml")
+  expect_works "a device with two exits connects" "$TWO"
+  FIRST=$(field "$(ask "$TWO" status)" 'd["exit"]["city"]')
+  [[ $FIRST == Alpha || $FIRST == Bravo ]] && ok "automatic mode picked $FIRST" || bad "no exit city in the report ($FIRST)"
+  if [[ $FIRST == Alpha || $FIRST == Bravo ]]; then
+    OTHER=$([[ $FIRST == Alpha ]] && echo Bravo || echo Alpha)
+    # frozen, not killed: connections stay open but nothing answers (a hung or cut-off exit)
+    kill -STOP "${XPID[$FIRST]}"; t0=$(date +%s); moved=""
+    while (( $(date +%s) - t0 < 40 )); do
+      if [[ $(field "$(ask "$TWO" status)" 'd["exit"]["city"]') == "$OTHER" ]]; then moved=$(( $(date +%s) - t0 )); break; fi
+      sleep 1
+    done
+    [[ -n $moved ]] && ok "when $FIRST stopped answering, the device moved to $OTHER in ${moved}s" || bad "the device did not move to $OTHER within 40s"
+    expect_works "pages still load after the move" "$TWO"
+    # a pin to the exit that is down must not fall over to the other
+    python3 - "$WORK/twoexits.yaml" "$FIRST" > "$WORK/pinned.yaml" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1])); cfg["kestrel_device"]["exit_choice"] = sys.argv[2]
+print(yaml.safe_dump(cfg))
+PY
+    P=$(start_client pinned "$WORK/pinned.yaml")
+    expect_refused "a device pinned to $FIRST does not use $OTHER" "$P"
+    python3 - "$WORK/twoexits.yaml" "$OTHER" > "$WORK/pinned2.yaml" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1])); cfg["kestrel_device"]["exit_choice"] = sys.argv[2]
+print(yaml.safe_dump(cfg))
+PY
+    P=$(start_client pinned2 "$WORK/pinned2.yaml")
+    expect_works "a device pinned to $OTHER uses it" "$P"
+    [[ $(field "$(ask "$P" status)" 'd["exit"]["city"]') == "$OTHER" ]] && ok "the pin is honoured" || bad "the pinned device is not on $OTHER"
+  fi
 fi
 
 echo "lockdown: $PASS passed, $FAIL failed"

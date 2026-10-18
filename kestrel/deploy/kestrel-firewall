@@ -6,7 +6,8 @@
 # Inbound: Oracle's default policy already rejects everything but SSH; this adds
 # only the exit's TCP port, with per-source connection rate and count limits.
 # Outbound for the exit's user: no mail ports, no private, link-local or cloud
-# metadata addresses.
+# metadata addresses, and nothing on loopback but the local DNS resolver (the
+# Chicago server runs the owner's own services on localhost).
 set -euo pipefail
 PORT=${KESTREL_PORT:-443}
 USER_NAME=kestrel
@@ -19,6 +20,9 @@ rules_in=(
   "-p tcp --dport $PORT -j ACCEPT"
 )
 rules_out=(
+  "-d 127.0.0.53/32 -p udp --dport 53 -j RETURN"
+  "-d 127.0.0.53/32 -p tcp --dport 53 -j RETURN"
+  "-d 127.0.0.0/8 -j REJECT"
   "-p tcp -m multiport --dports 25,465,587,2525 -j REJECT --reject-with tcp-reset"
   "-d 10.0.0.0/8 -j REJECT"
   "-d 172.16.0.0/12 -j REJECT"
@@ -44,6 +48,8 @@ apply() {
     || $IP6T -I INPUT 1 -p tcp --dport "$PORT" -j REJECT
   $IP6T -C OUTPUT -m owner --uid-owner "$USER_NAME" -p tcp -m multiport --dports 25,465,587,2525 -j REJECT 2>/dev/null \
     || $IP6T -I OUTPUT 1 -m owner --uid-owner "$USER_NAME" -p tcp -m multiport --dports 25,465,587,2525 -j REJECT
+  $IP6T -C OUTPUT -m owner --uid-owner "$USER_NAME" -d ::1/128 -j REJECT 2>/dev/null \
+    || $IP6T -I OUTPUT 1 -m owner --uid-owner "$USER_NAME" -d ::1/128 -j REJECT
   echo "kestrel firewall applied (port $PORT)"
 }
 
@@ -55,6 +61,7 @@ check() {
   for r in "${rules_out[@]}"; do $IPT -C KESTREL-OUT $r 2>/dev/null || { echo "missing out: $r"; fail=1; }; done
   $IPT -C INPUT -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || { echo "missing: default inbound reject"; fail=1; }
   $IP6T -C INPUT -p tcp --dport "$PORT" -j REJECT 2>/dev/null || { echo "missing: ipv6 reject"; fail=1; }
+  $IP6T -C OUTPUT -m owner --uid-owner "$USER_NAME" -d ::1/128 -j REJECT 2>/dev/null || { echo "missing: ipv6 loopback reject"; fail=1; }
   local listeners
   listeners=$(ss -Htln | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127)' | grep -vE ":(22|111|$PORT)$" || true)
   [[ -z "$listeners" ]] || echo "note: other public listeners (behind the default reject): $listeners"
