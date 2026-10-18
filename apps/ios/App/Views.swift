@@ -149,6 +149,8 @@ struct SettingsSheet: View {
     @EnvironmentObject var model: TunnelModel
     @Environment(\.dismiss) var dismiss
     @State private var confirmForget = false
+    @State private var report = ""
+    @State private var showReport = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -161,6 +163,22 @@ struct SettingsSheet: View {
             }
             .tint(Ink.accent)
             .padding(.vertical, 12)
+            Divider().overlay(Ink.line)
+            Button {
+                Task {
+                    report = await model.engineReport()
+                    showReport = true
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "waveform.path.ecg")
+                    Text("Connection details").font(.geist(16, .medium))
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(Ink.faint)
+                }
+                .foregroundStyle(Ink.ink)
+                .frame(minHeight: 52)
+            }
             Divider().overlay(Ink.line)
             Button(role: .destructive) { confirmForget = true } label: {
                 HStack {
@@ -177,6 +195,30 @@ struct SettingsSheet: View {
         }
         .padding(24)
         .background(Ink.raise.ignoresSafeArea())
+        .sheet(isPresented: $showReport) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Connection details").font(.geist(22, .semibold)).tracking(-0.6)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = report
+                    } label: {
+                        Image(systemName: "doc.on.doc").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Copy")
+                }
+                ScrollView {
+                    Text(report)
+                        .font(.geistMono(12))
+                        .foregroundStyle(Ink.muted)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(24)
+            .background(Ink.raise.ignoresSafeArea())
+            .foregroundStyle(Ink.ink)
+        }
         .confirmationDialog("Remove the key?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { Task { await model.forget(); dismiss() } }
         } message: {

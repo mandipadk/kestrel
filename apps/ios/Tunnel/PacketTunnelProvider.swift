@@ -2,16 +2,24 @@ import Foundation
 import NetworkExtension
 import os
 
-/// Runs the Kestrel (Geph5) client inside the packet tunnel: packets from the
-/// system go into the client's IP stack, and its replies come back out.
+/// Runs the Kestrel (Geph5) engine inside the packet tunnel: packets from the
+/// system go into the engine's IP stack, and its replies come back out.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let log = Logger(subsystem: "dev.mandip.kestrel", category: "tunnel")
     private var running = false
 
     override func startTunnel(options: [String: NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+        log.info("startTunnel")
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
-              let config = proto.providerConfiguration?["config"] as? String else {
+              let saved = proto.providerConfiguration?["config"] as? String else {
             completionHandler(fail("This iPhone has no Kestrel key yet. Open Kestrel and add it."))
+            return
+        }
+        let config: String
+        do {
+            config = try Engine.prepare(configJSON: saved, cacheDirectory: Engine.defaultCacheDirectory())
+        } catch {
+            completionHandler(fail("Could not prepare the engine: \(error.localizedDescription)"))
             return
         }
         let host = (proto.serverAddress ?? "").split(separator: ":").first.map(String.init) ?? "127.0.0.1"
@@ -25,19 +33,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let v6 = NEIPv6Settings(addresses: ["fd89::2"], networkPrefixLengths: [128])
         v6.includedRoutes = [NEIPv6Route.default()]
         settings.ipv6Settings = v6
-        settings.dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "9.9.9.9"])
-        settings.dnsSettings?.matchDomains = [""]
+        let dns = NEDNSSettings(servers: ["1.1.1.1", "9.9.9.9"])
+        dns.matchDomains = [""]
+        settings.dnsSettings = dns
         settings.mtu = 1450
 
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else { return }
             if let error {
-                completionHandler(error)
+                completionHandler(self.fail("iOS refused the tunnel settings: \(error.localizedDescription)"))
                 return
             }
-            let rc = config.withCString { start_client($0, -1) }
-            guard rc == 0 else {
-                completionHandler(self.fail("The Kestrel engine would not start (\(rc))."))
+            do {
+                try Engine.start(configJSON: config)
+            } catch {
+                completionHandler(self.fail(error.localizedDescription))
                 return
             }
             self.running = true
@@ -49,11 +59,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        log.info("stopTunnel reason=\(reason.rawValue, privacy: .public)")
         running = false
         completionHandler()
         // The engine lives for the life of the process; leave so the next
         // start gets a fresh one.
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { exit(0) }
+    }
+
+    /// The app asks for the engine's view of things to show on its details sheet.
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        let report: [String: Any] = [
+            "state": Engine.connectionState(),
+            "logs": Engine.recentLogs(30),
+        ]
+        completionHandler?(try? JSONSerialization.data(withJSONObject: report))
     }
 
     private func readFromSystem() {

@@ -49,6 +49,7 @@ targets:
     platform: iOS
     sources:
       - path: Tunnel
+      - path: Shared
     info:
       path: Tunnel/Info.plist
       properties:
@@ -69,3 +70,35 @@ targets:
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/aarch64-apple-ios/release
         OTHER_LDFLAGS: [-lgeph5_client, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
         DEAD_CODE_STRIPPING: YES
+  EngineTests:
+    # Runs the iOS engine in the Simulator and sends real packets through the exit.
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      - path: Shared
+      - path: App/TunnelModel.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel.enginetests
+        SWIFT_OBJC_BRIDGING_HEADER: Tunnel/Geph.h
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/../../target/aarch64-apple-ios-sim/release
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(SRCROOT)/../../target/aarch64-apple-ios/release
+        OTHER_LDFLAGS: [-lgeph5_client, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+schemes:
+  Kestrel:
+    build:
+      targets:
+        Kestrel: all
+        KestrelTunnel: all
+    archive:
+      config: Release
+  EngineTests:
+    build:
+      targets:
+        EngineTests: [test]
+    test:
+      config: Release
+      targets: [EngineTests]

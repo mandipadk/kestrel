@@ -110,9 +110,21 @@ final class TunnelModel: ObservableObject {
         }
     }
 
+    private var attempting = false
+
     private func refreshStatus() {
         let conn = manager?.connection
+        let previous = status
         status = conn?.status ?? .invalid
+        if status == .connected { attempting = false }
+        // A start that ends in Off: ask iOS why, and say so.
+        if status == .disconnected, attempting, previous != .disconnected, let conn {
+            attempting = false
+            conn.fetchLastDisconnectError { [weak self] err in
+                guard let err = err as NSError? else { return }
+                Task { @MainActor in self?.error = TunnelModel.explain(err) }
+            }
+        }
         connectedSince = status == .connected ? conn?.connectedDate : nil
         if status == .connected {
             Task { await checkAddress() }
@@ -172,9 +184,46 @@ final class TunnelModel: ObservableObject {
                 try await m.saveToPreferences()
                 try await m.loadFromPreferences()
             }
+            attempting = true
             try m.connection.startVPNTunnel()
         } catch {
+            attempting = false
             self.error = "Could not connect: \(error.localizedDescription)"
+        }
+    }
+
+    /// Turns the error iOS kept from the last attempt into something readable,
+    /// keeping the code so a report can say exactly what happened.
+    static func explain(_ err: NSError) -> String {
+        var text = "Couldn't connect: \(err.localizedDescription)"
+        if err.domain != "dev.mandip.kestrel" {
+            text += " [\(err.domain) \(err.code)]"
+        }
+        if let under = err.userInfo[NSUnderlyingErrorKey] as? NSError {
+            text += " — \(under.localizedDescription) [\(under.domain) \(under.code)]"
+        }
+        return text
+    }
+
+    /// The engine's own view (state and recent log lines), from the running tunnel.
+    func engineReport() async -> String {
+        guard let session = manager?.connection as? NETunnelProviderSession, status == .connected else {
+            return error ?? "Not connected. Last status: \(status.rawValue)."
+        }
+        return await withCheckedContinuation { cont in
+            do {
+                try session.sendProviderMessage(Data("report".utf8)) { data in
+                    guard let data,
+                          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        cont.resume(returning: "The tunnel didn't answer.")
+                        return
+                    }
+                    let logs = (obj["logs"] as? [String] ?? []).joined(separator: "\n")
+                    cont.resume(returning: "Engine: \(obj["state"] ?? "?")\n\n\(logs)")
+                }
+            } catch {
+                cont.resume(returning: "Couldn't ask the tunnel: \(error.localizedDescription)")
+            }
         }
     }
 
