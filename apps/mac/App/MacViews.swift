@@ -196,7 +196,7 @@ struct MenuBarPanel: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Shield").font(.geist(13, .medium))
                         Spacer()
-                        Text("\(shield.blocked24h.formatted()) blocked today").font(.geist(13)).foregroundStyle(Ink.muted)
+                        Text("\(shield.blocked24h.formatted()) blocked in 24 h").font(.geist(13)).foregroundStyle(Ink.muted)
                     }
                     .padding(.top, 16)
                     HourStrip(hourly: shield.hourly).frame(height: 20).padding(.top, 8)
