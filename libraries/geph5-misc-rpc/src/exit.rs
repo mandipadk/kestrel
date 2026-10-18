@@ -36,6 +36,10 @@ pub enum ClientCryptHello {
     SharedSecretChallenge([u8; 32]),
     /// An X25519 public key to be used to add a layer of encryption
     X25519(x25519_dalek::PublicKey),
+    /// Kestrel: an X25519 public key and an ML-KEM-768 encapsulation key; the
+    /// session keys come from both (see `kestrel_pq`). Added last, so the old
+    /// variants keep their wire tags.
+    X25519MlKem768(x25519_dalek::PublicKey, Vec<u8>),
 }
 
 /// ExitHello represents the response of the exit node to the initial
@@ -60,6 +64,8 @@ pub enum ExitHelloInner {
     SharedSecretResponse(blake3::Hash),
     /// An X25519 public key to be used in the key exchange process
     X25519(x25519_dalek::PublicKey),
+    /// Kestrel: the exit's X25519 public key and the ML-KEM-768 ciphertext
+    X25519MlKem768(x25519_dalek::PublicKey, Vec<u8>),
 }
 
 /// ClientExitCryptPipe is a sillad::Pipe implementation representing an end-to-end encrypted connection between the client and the exit.

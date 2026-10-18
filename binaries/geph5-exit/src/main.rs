@@ -152,6 +152,11 @@ struct ConfigFile {
     /// no reply at all.
     #[serde(default = "default_true")]
     kestrel_allow_plain: bool,
+
+    /// Kestrel: refuse the classical (X25519-only) handshake. Turn on once
+    /// every device's app uses the quantum-safe one (the page shows which).
+    #[serde(default)]
+    kestrel_require_pq: bool,
 }
 
 fn default_true() -> bool {
