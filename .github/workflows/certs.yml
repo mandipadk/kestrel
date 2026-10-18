@@ -1,0 +1,21 @@
+# Lists the team's signing certificates (read-only), to keep an eye on the
+# limit that CI's Xcode signing can run into.
+name: certs
+on:
+  workflow_dispatch:
+jobs:
+  list:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Certificates
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/key.p8"
+          python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install 'pyjwt[crypto]'
+          ASC_KEY_PATH="$RUNNER_TEMP/keys/key.p8" "$RUNNER_TEMP/venv/bin/python" apps/asc.py certs
+          rm -rf "$RUNNER_TEMP/keys"

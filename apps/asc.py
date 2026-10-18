@@ -3,6 +3,7 @@
 
     asc.py bundle <identifier>                 show a bundle ID's platform and capabilities
     asc.py capability <identifier> <TYPE>      make sure a capability is on (e.g. ACCESS_WIFI_INFORMATION)
+    asc.py certs                               list the team's signing certificates
     asc.py devid-profile <identifier> <name> <cert serial hex> <out file>
                                                a fresh Developer ID (Mac, direct) provisioning profile
 
@@ -107,6 +108,13 @@ def main():
         if status not in (200, 201):
             sys.exit(f"could not turn on {sys.argv[3]} ({status}): {out}")
         print(f"turned on {sys.argv[3]} for {sys.argv[2]}")
+    elif len(sys.argv) >= 2 and sys.argv[1] == "certs":
+        status, certs = call("GET", "/certificates?limit=200")
+        if status != 200:
+            sys.exit(f"cannot list certificates ({status}): {certs}")
+        for c in sorted(certs["data"], key=lambda c: c["attributes"]["expirationDate"]):
+            a = c["attributes"]
+            print(f"{c['id']}  {a['certificateType']:<28} {a['expirationDate'][:10]}  {a['name']}  ({a.get('displayName','')})")
     elif len(sys.argv) >= 6 and sys.argv[1] == "devid-profile":
         devid_profile(*sys.argv[2:6])
     else:
