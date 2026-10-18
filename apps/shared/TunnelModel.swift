@@ -33,16 +33,23 @@ struct ExitReport: Equatable {
 
     var device: String
     var stealth: Bool
+    /// The session keys came from X25519 and ML-KEM-768 together.
+    var quantumSafe: Bool
     var exitCity: String
     var exitCountry: String
     var shield: Shield
+    /// All of the owner's exits, as the exit tells it.
+    var exits: [KestrelExit]
 
-    init(device: String, stealth: Bool, exitCity: String, exitCountry: String, shield: Shield) {
+    init(device: String, stealth: Bool, quantumSafe: Bool = true, exitCity: String, exitCountry: String,
+         shield: Shield, exits: [KestrelExit] = []) {
         self.device = device
         self.stealth = stealth
+        self.quantumSafe = quantumSafe
         self.exitCity = exitCity
         self.exitCountry = exitCountry
         self.shield = shield
+        self.exits = exits
     }
 
     init?(json: [String: Any]) {
@@ -53,6 +60,12 @@ struct ExitReport: Equatable {
         let paused = int(s["paused_until"])
         self.device = device
         stealth = json["stealth"] as? Bool ?? false
+        quantumSafe = json["quantum_safe"] as? Bool ?? false
+        exits = (json["exits"] as? [[String: Any]] ?? []).compactMap { e in
+            guard let city = e["city"] as? String, let endpoint = e["endpoint"] as? String,
+                  let key = e["pubkey"] as? String, key.count == 64, key.allSatisfy(\.isHexDigit) else { return nil }
+            return KestrelExit(c: city, e: endpoint, k: key)
+        }
         exitCity = exit["city"] as? String ?? ""
         exitCountry = exit["country"] as? String ?? ""
         shield = Shield(
@@ -81,6 +94,10 @@ final class TunnelModel: ObservableObject {
     @Published var trustedNetworks: [String] = []
     @Published var report: ExitReport?
     @Published var error: String?
+    /// All of the owner's exits this device knows (from its setup code, or
+    /// learned from an exit's report), and the one to stay on (nil: automatic).
+    @Published var exits: [KestrelExit] = []
+    @Published var exitChoice: String?
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
@@ -92,14 +109,17 @@ final class TunnelModel: ObservableObject {
 
     func load() async {
         trustedNetworks = defaults.stringArray(forKey: "trustedNetworks") ?? []
+        exits = (defaults.data(forKey: "exits")).flatMap { try? JSONDecoder().decode([KestrelExit].self, from: $0) } ?? []
+        exitChoice = defaults.string(forKey: "exitChoice")
         let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
         manager = managers.first
         if let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
            let raw = proto.providerConfiguration?["key"] as? String {
             device = DeviceKey.parse(raw)
+            if exits.isEmpty, let x = device?.x { exits = x }
             // Settings saved by an older build: bring the engine config up to
-            // date (it now asks for the stealth link).
-            if let key = device, proto.providerConfiguration?["config"] as? String != key.clientConfig {
+            // date (stealth link, packet size, the exit list).
+            if let key = device, proto.providerConfiguration?["config"] as? String != config(for: key) {
                 await install(key, raw: raw)
             }
         }
@@ -141,6 +161,7 @@ final class TunnelModel: ObservableObject {
             publicIP = nil
             reportTask?.cancel()
             reportTask = nil
+            if status == .disconnected { Task { await applyConfigIfIdle() } }
         }
     }
 
@@ -188,7 +209,64 @@ final class TunnelModel: ObservableObject {
         guard let reply = await message("exit:\(request)") else { return }
         if let json = reply["exit"] as? [String: Any], let report = ExitReport(json: json) {
             self.report = report
+            await learnExits(report.exits)
         }
+    }
+
+    // MARK: - Exits
+
+    /// The engine config for this device with its exits and choice.
+    func config(for key: DeviceKey) -> String {
+        key.clientConfig(exits: exits, choice: exitChoice)
+    }
+
+    /// An exit told us the owner's exits (it came through the tunnel, so it is
+    /// ours): keep the list. Saving a changed VPN configuration can drop a live
+    /// connection, so the engine gets it once the tunnel is next off.
+    private func learnExits(_ told: [KestrelExit]) async {
+        guard !told.isEmpty, Set(told) != Set(exits), device != nil else { return }
+        exits = told
+        defaults.set(try? JSONEncoder().encode(told), forKey: "exits")
+        if let choice = exitChoice, !told.contains(where: { $0.c == choice }) {
+            exitChoice = nil
+            defaults.removeObject(forKey: "exitChoice")
+        }
+        await applyConfigIfIdle()
+    }
+
+    /// Saves the engine config if it changed and the tunnel is off.
+    private func applyConfigIfIdle() async {
+        guard !isOn, !isBusy, let key = device,
+              let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
+              let raw = proto.providerConfiguration?["key"] as? String,
+              proto.providerConfiguration?["config"] as? String != config(for: key)
+        else { return }
+        await install(key, raw: raw)
+    }
+
+    /// Stays on one exit (a city), or nil for automatic; reconnects to apply it.
+    func setExitChoice(_ city: String?) async {
+        guard city != exitChoice, let key = device,
+              let raw = (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["key"] as? String
+        else { return }
+        exitChoice = city
+        defaults.set(city, forKey: "exitChoice")
+        let wasOn = isOn || isBusy
+        await install(key, raw: raw)
+        if wasOn, let m = manager {
+            m.connection.stopVPNTunnel()
+            for _ in 0..<40 where m.connection.status != .disconnected {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            await toggle()
+        }
+    }
+
+    /// The exit in use, as the exit says, or the only one there is.
+    var exitName: String {
+        if let city = report?.exitCity, !city.isEmpty { return city }
+        if let choice = exitChoice { return choice }
+        return exits.count > 1 ? "Automatic" : "Frankfurt"
     }
 
     private func message(_ text: String) async -> [String: Any]? {
@@ -222,7 +300,8 @@ final class TunnelModel: ObservableObject {
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = "dev.mandip.kestrel.tunnel"
         proto.serverAddress = key.endpoint
-        proto.providerConfiguration = ["config": key.clientConfig, "key": raw]
+        if exits.isEmpty, let x = key.x { exits = x }
+        proto.providerConfiguration = ["config": config(for: key), "key": raw]
         proto.disconnectOnSleep = false
         m.protocolConfiguration = proto
         m.localizedDescription = "Kestrel"
@@ -248,6 +327,8 @@ final class TunnelModel: ObservableObject {
             m.connection.stopVPNTunnel()
             return
         }
+        // a new exit list or choice waiting for the tunnel to be off
+        await applyConfigIfIdle()
         do {
             if !m.isEnabled {
                 m.isEnabled = true
@@ -349,6 +430,7 @@ final class TunnelModel: ObservableObject {
             connectedSince = Calendar.current.date(bySettingHour: 9, minute: 41, second: 0, of: Date())
             publicIP = "203.0.113.7"
             report = Sample.report
+            exits = Sample.exits
         } else {
             status = .disconnected
         }
@@ -368,6 +450,10 @@ final class TunnelModel: ObservableObject {
         device = nil
         report = nil
         onDemand = false
+        exits = []
+        exitChoice = nil
+        defaults.removeObject(forKey: "exits")
+        defaults.removeObject(forKey: "exitChoice")
         refreshStatus()
     }
 }

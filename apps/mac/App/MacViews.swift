@@ -76,7 +76,7 @@ struct MenuBarPanel: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .disabled(model.device == nil)
-                .help(model.isOn ? "Disconnect" : "Connect through Frankfurt")
+                .help(model.isOn ? "Disconnect" : "Connect through \(model.exitChoice ?? "the fastest exit")")
             }
             HStack(spacing: 6) {
                 Circle().fill(dotColor).frame(width: 7, height: 7)
@@ -95,7 +95,7 @@ struct MenuBarPanel: View {
 
     private var summary: String {
         if model.device == nil { return "Not set up on this Mac yet" }
-        if model.isOn { return "Connected through Frankfurt" }
+        if model.isOn { return "Connected through \(model.exitName)" }
         if model.isBusy { return "\(model.statusWord)…" }
         return "Off. Traffic goes the usual way"
     }
@@ -103,6 +103,7 @@ struct MenuBarPanel: View {
     @ViewBuilder private var connected: some View {
         VStack(spacing: 4) {
             KeyValue("Seen as", model.publicIP ?? "checking…", mono: model.publicIP != nil)
+            if model.exits.count > 1 { KeyValue("Exit", model.exitDescription) }
             KeyValue("Link", model.linkDescription)
             if let since = model.connectedSince {
                 KeyValue("Connected", "since \(since.formatted(date: .omitted, time: .shortened))")
@@ -352,6 +353,19 @@ struct GeneralSettings: View {
                     Text(loginError ?? "Keep Kestrel in the menu bar from the moment you sign in.")
                 }
             }
+            if model.exits.count > 1 {
+                Section {
+                    Picker(selection: Binding(get: { model.exitChoice ?? "" },
+                                              set: { v in Task { await model.setExitChoice(v.isEmpty ? nil : v) } })) {
+                        Text("Automatic").tag("")
+                        ForEach(model.exits, id: \.self) { Text($0.city).tag($0.city) }
+                    } label: {
+                        Text("Exit")
+                        Text("Automatic uses the fastest exit and moves to the other if it stops answering.")
+                    }
+                    .pickerStyle(.menu)
+                }
+            }
             Section {
                 LabeledContent {
                     Text(shieldState).foregroundStyle(.secondary)
@@ -380,7 +394,7 @@ struct GeneralSettings: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(height: 372)
+        .frame(height: model.exits.count > 1 ? 452 : 372)
     }
 
     private var shieldState: String {
@@ -489,7 +503,7 @@ struct ThisMacSettings: View {
                 LabeledContent("Device") {
                     Text(model.device?.name ?? "Not set up").font(.system(size: 12, design: .monospaced))
                 }
-                LabeledContent("Exit", value: model.report.map { "\($0.exitCity), \($0.exitCountry)" } ?? "Frankfurt")
+                LabeledContent("Exit", value: model.report.map { "\($0.exitCity), \($0.exitCountry)" } ?? model.exitName)
                 LabeledContent("Link", value: model.linkDescription)
                 LabeledContent("Network extension", value: extensionState)
             }

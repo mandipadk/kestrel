@@ -112,6 +112,18 @@ pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
     Some(device_report(device))
 }
 
+/// The owner's exits, as the device should know them (empty if not set).
+fn known_exits() -> serde_json::Value {
+    CONFIG_FILE
+        .wait()
+        .kestrel_exits
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice::<Vec<geph5_misc_rpc::kestrel::KestrelExit>>(&b).ok())
+        .map(|exits| serde_json::json!(exits))
+        .unwrap_or_else(|| serde_json::json!([]))
+}
+
 /// What a device may learn about itself.
 fn device_report(device: &str) -> Vec<u8> {
     let usage = USAGE.get(device).map(|u| u.clone());
@@ -127,6 +139,7 @@ fn device_report(device: &str) -> Vec<u8> {
         "asn": asn,
         "country": country,
         "exit": { "country": cfg.country.alpha2(), "city": cfg.city },
+        "exits": known_exits(),
         "shield": shield::summary(device),
         "now": now_secs(),
     }))
