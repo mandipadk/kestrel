@@ -16,7 +16,7 @@
 - [x] QR bug: page regex matched allow_direct; now YAML-parsed and validated (30/30 round-trip)
 - [x] MacBook connected (exit log: device=macbook)
 - [x] iPhone tunnel died at start: extension was linked with -lgeph5_client, which picks the cdylib; now links the .a by path. CI checks otool -L (system libs only) and runs EngineTests on the Simulator: DNS packets round-trip through the exit (device ci-ios). Build 7 in TestFlight.
-- [ ] OWNER: install build 7, tap Connect; confirm "iphone" shows Connected now on the page
+- [x] iPhone connected after build 7 (exit counted 20 MB from "iphone")
 - [ ] Server IP still appears in kestrelctl default + security-review default (and history); move to /var/lib/kestrel/endpoint when allowed
 - [ ] Remaining advisories needing manual bumps: sqlx 0.7 -> 0.8 (major), rsa (no fix, Marvin), rustls 0.21 line via an old dep
 - [ ] Firewall: exempt lo from the per-source hashlimit (next root change)
@@ -25,12 +25,12 @@
 ## Round 2 (2026-10-18): Mac app + big VPN features
 
 Picked (research notes in kestrel/README.md "What Kestrel adds"):
-- [ ] Shield: the exit blocks ads, trackers and malware for each device (oisd lists, refreshed daily), answers blocked lookups at once, counts per device (today, top domains); on/off per device
-- [ ] Stealth link: devices reach the exit over sosistab3 (looks like random bytes, probes get nothing back) on the same port 443; the exit tells which devices are hidden; old plain clients keep working until switched off
-- [ ] Sentinel: the exit notes each device's network (ASN, country) and any revoked or unknown key that tries to connect; the page shows it
+- [x] Shield: the exit blocks ads, trackers and malware for each device (oisd lists, refreshed daily), answers blocked lookups at once, counts per device (today, top domains); on/off per device
+- [x] Stealth link: devices reach the exit over sosistab3 (looks like random bytes, probes get nothing back) on the same port 443; the exit tells which devices are hidden; old plain clients keep working until switched off
+- [x] Sentinel: the exit notes each device's network (ASN, country) and any revoked or unknown key that tries to connect; the page shows it
 - [ ] Trusted networks: apps connect on their own except on Wi-Fi you mark as trusted
 - [ ] Mac app: SwiftUI app + packet-tunnel extension, menu bar, same look as iPhone; TestFlight for Mac via CI
 - [ ] iPhone: Shield, stealth, trusted networks, setup by link (kestrel1: URL scheme)
-- [ ] Status page: Shield report, network per device, Mac setup by code
-- [ ] Deploy via sync.sh --deploy-only; lockdown test; README
+- [x] Status page: Shield report, network per device, Mac setup by code
+- [x] Deploy via sync.sh --deploy-only; lockdown test; README
 Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
