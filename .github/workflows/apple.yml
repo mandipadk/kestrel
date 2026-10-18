@@ -190,7 +190,7 @@ jobs:
           set -o pipefail
           cd apps/ios
           xcodebuild test -project Kestrel.xcodeproj -scheme Screens -destination "id=$SIM" \
-            -resultBundlePath "$RUNNER_TEMP/screens.xcresult" CODE_SIGNING_ALLOWED=NO | xcbeautify
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES -resultBundlePath "$RUNNER_TEMP/screens.xcresult" CODE_SIGNING_ALLOWED=NO | xcbeautify
           mkdir -p "$RUNNER_TEMP/screens"
           xcrun xcresulttool export attachments --path "$RUNNER_TEMP/screens.xcresult" --output-path "$RUNNER_TEMP/screens"
           ls -la "$RUNNER_TEMP/screens"

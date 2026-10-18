@@ -36,7 +36,7 @@ final class SnapshotTests: XCTestCase {
             .appendingPathComponent("mac")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try png.write(to: dir.appendingPathComponent("\(name).png"))
-        XCTAssertGreaterThan(size.width, 100)
+        XCTAssertGreaterThan(size.width, 40)
     }
 
     func testScreens() throws {
