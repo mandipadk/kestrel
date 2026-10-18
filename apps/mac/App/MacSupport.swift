@@ -86,7 +86,7 @@ final class TunnelExtension: NSObject, ObservableObject, OSSystemExtensionReques
 /// Says what the owner has to do for the tunnel extension, if anything.
 struct ExtensionNotice: View {
     @ObservedObject var ext = TunnelExtension.shared
-    /// the menu bar panel's shorter wording
+    /// the menu bar panel's shorter wording and inset
     var compact = false
 
     var body: some View {
@@ -95,13 +95,14 @@ struct ExtensionNotice: View {
             Notice(symbol: "puzzlepiece.extension", title: "Allow Kestrel's network extension",
                    detail: compact ? "macOS asks once, in Login Items & Extensions."
                                    : "macOS asks once. In System Settings, open General, Login Items & Extensions, Network Extensions, and turn Kestrel on.",
-                   button: "Open System Settings") { TunnelExtension.openSettings() }
+                   button: "Open System Settings", action: { TunnelExtension.openSettings() }, inset: compact ? 10 : 0)
         case .notInApplications:
             Notice(symbol: "folder", title: "Move Kestrel to Applications",
-                   detail: "macOS only installs its network extension from there. Drag Kestrel into Applications and open it again.")
+                   detail: "macOS only installs its network extension from there. Drag Kestrel into Applications and open it again.",
+                   inset: compact ? 10 : 0)
         case .failed(let message):
             Notice(symbol: "exclamationmark.triangle", title: "The network extension didn't install",
-                   detail: message, button: "Try Again") { Task { await ext.activate() } }
+                   detail: message, button: "Try Again", action: { Task { await ext.activate() } }, inset: compact ? 10 : 0)
         default:
             EmptyView()
         }
