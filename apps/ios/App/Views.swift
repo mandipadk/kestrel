@@ -51,8 +51,11 @@ struct WelcomeView: View {
     }
 
     private func use(_ code: String) async {
-        guard let key = DeviceKey.parse(code) else {
-            message = "That isn't a Kestrel setup code."
+        let key: DeviceKey
+        switch DeviceKey.decode(code) {
+        case .success(let k): key = k
+        case .failure(let problem):
+            message = problem.message
             return
         }
         message = nil
