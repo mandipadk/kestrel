@@ -2,7 +2,8 @@
 #   - the Mac app (menu bar + window, tunnel as a system extension), tested
 #     against the live exit, signed with the owner's Developer ID, notarized,
 #     and published as Kestrel.dmg on the mac-latest release (the Kestrel page
-#     links there)
+#     links there), with a signed Sparkle appcast the app updates itself from;
+#     each release is first tested by updating an older copy on the runner
 #   - the iPhone app, tested in the Simulator against the live exit and sent
 #     to TestFlight
 # Each job also keeps screenshots of its screens (sample data) as an artifact.
@@ -35,14 +36,20 @@ env:
 jobs:
   mac:
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: write
     env:
       MAC_APP_PROFILE: Kestrel Mac Developer ID
       MAC_TUNNEL_PROFILE: Kestrel Tunnel Developer ID
+      # the half of SPARKLE_ED_KEY the app trusts (SUPublicEDKey in project.yml)
+      SPARKLE_PUBLIC_KEY: pHkJv+GprSFixQT95qmbpafGJkG7UkpCQsz3hHVNBNg=
+      RELEASES: https://github.com/mandipadk/kestrel/releases/download
     steps:
       - uses: actions/checkout@v4
+        with:
+          # enough history for the update's release notes
+          fetch-depth: 300
       - name: Xcode 26
         run: |
           XC=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
@@ -199,6 +206,7 @@ jobs:
           MNT=$(mktemp -d)
           hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$RUNNER_TEMP/Kestrel.dmg" >/dev/null
           rc=0; apps/mac/check-extension.sh "$MNT/Kestrel.app" || rc=1
+          apps/mac/check-update.sh "$MNT/Kestrel.app" "$SPARKLE_PUBLIC_KEY" || rc=1
           spctl --assess --type execute -vv "$MNT/Kestrel.app" || rc=1
           hdiutil detach "$MNT" >/dev/null
           exit $rc
@@ -208,7 +216,78 @@ jobs:
           name: kestrel-mac-dmg
           path: ${{ runner.temp }}/Kestrel.dmg
           retention-days: 30
-      - name: Publish for the Kestrel page
+      # In-app updates: Sparkle's sign_update signs the .dmg and the feed with
+      # SPARKLE_ED_KEY; the app refuses anything that doesn't verify against
+      # SPARKLE_PUBLIC_KEY. The Sparkle version is the one project.yml pins.
+      - name: Sparkle tools
+        if: steps.devid.outputs.ready == 'true'
+        run: |
+          V=$(sed -n 's/^ *exactVersion: *//p' apps/mac/project.yml)
+          SPK="$RUNNER_TEMP/sparkle"
+          mkdir -p "$SPK"
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/$V/Sparkle-$V.tar.xz" | tar -xJ -C "$SPK"
+          # sparkle-cli isn't in the download any more; build it to test the update
+          git clone -q --depth 1 --branch "$V" https://github.com/sparkle-project/Sparkle "$RUNNER_TEMP/sparkle-src"
+          xcodebuild -project "$RUNNER_TEMP/sparkle-src/Sparkle.xcodeproj" -scheme sparkle-cli -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/sparkle-dd" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+            build | xcbeautify
+          CLI=$(find "$RUNNER_TEMP/sparkle-dd/Build/Products/Release" -type f -perm +111 -path '*.app/Contents/MacOS/*' | grep -i sparkle | head -1)
+          [[ -x "$CLI" ]] || { echo "::error::sparkle-cli did not build"; exit 1; }
+          echo "SPARKLE_CLI=$CLI" >> "$GITHUB_ENV"
+          echo "SIGN_UPDATE=$SPK/bin/sign_update" >> "$GITHUB_ENV"
+      - name: Sign the update and its feed
+        if: steps.devid.outputs.ready == 'true'
+        env:
+          SPARKLE_ED_KEY: ${{ secrets.SPARKLE_ED_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ -n "$SPARKLE_ED_KEY" ]] || { echo "::error::SPARKLE_ED_KEY is not set"; exit 1; }
+          KEY="$RUNNER_TEMP/keys/sparkle.key"
+          ( umask 077; printf '%s' "$SPARKLE_ED_KEY" > "$KEY" )
+          DMG="$RUNNER_TEMP/Kestrel.dmg"
+          SIG=$("$SIGN_UPDATE" --ed-key-file "$KEY" -p "$DMG")
+          "$RUNNER_TEMP/venv/bin/python" apps/mac/appcast.py verify --public-key "$SPARKLE_PUBLIC_KEY" --signature "$SIG" "$DMG"
+          SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$RUNNER_TEMP/export/Kestrel.app/Contents/Info.plist")
+          # release notes: what changed in the apps since the build on mac-latest
+          PREV=$(gh release view mac-latest --json body -q .body 2>/dev/null | grep -oE 'Built from [0-9a-f]{7}' | cut -d' ' -f3 || true)
+          RANGE=HEAD~10..HEAD
+          [[ -n "$PREV" ]] && git cat-file -e "$PREV" 2>/dev/null && RANGE="$PREV..HEAD"
+          git log --no-merges --format='- %s' "$RANGE" -- apps/mac apps/shared | head -20 > "$RUNNER_TEMP/notes.md"
+          [[ -s "$RUNNER_TEMP/notes.md" ]] || echo "- Upstream Geph changes and fixes" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+          mkdir -p "$RUNNER_TEMP/feed"
+          python3 apps/mac/appcast.py feed --build "$BUILD_NUMBER" --short "$SHORT" \
+            --url "$RELEASES/mac-b$BUILD_NUMBER/Kestrel.dmg" --length "$(stat -f%z "$DMG")" --signature "$SIG" \
+            --notes "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/feed/appcast.xml"
+          "$SIGN_UPDATE" --ed-key-file "$KEY" "$RUNNER_TEMP/feed/appcast.xml"
+          tail -5 "$RUNNER_TEMP/feed/appcast.xml"
+          # the same feed with one changed byte and the old signature: the update test must refuse it
+          sed 's/<title>Kestrel /<title>Kestrel  /' "$RUNNER_TEMP/feed/appcast.xml" > "$RUNNER_TEMP/feed/appcast-tampered.xml"
+          cmp -s "$RUNNER_TEMP/feed/appcast.xml" "$RUNNER_TEMP/feed/appcast-tampered.xml" && { echo "::error::tampering changed nothing"; exit 1; }
+          rm -f "$KEY"
+      # Each build gets its own release (mac-b<N>), which the feed points at, so
+      # a feed and its .dmg never disagree. It is tested there before mac-latest
+      # moves to it.
+      - name: Stage the release
+        if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="mac-b$BUILD_NUMBER"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+            --title "Kestrel for Mac, build $BUILD_NUMBER" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release upload "$TAG" "$RUNNER_TEMP/Kestrel.dmg" "$RUNNER_TEMP/feed/appcast.xml" "$RUNNER_TEMP/feed/appcast-tampered.xml" --clobber
+      - name: Update test (an older Kestrel updates itself to this build)
+        if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight)
+        run: |
+          MNT=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$RUNNER_TEMP/Kestrel.dmg" >/dev/null
+          rc=0
+          apps/mac/test-update.sh "$MNT/Kestrel.app" "$SPARKLE_CLI" \
+            "$RELEASES/mac-b$BUILD_NUMBER/appcast.xml" "$RELEASES/mac-b$BUILD_NUMBER/appcast-tampered.xml" || rc=$?
+          hdiutil detach "$MNT" >/dev/null
+          exit $rc
+      - name: Publish for the Kestrel page and in-app updates
         if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -216,8 +295,12 @@ jobs:
           gh release view mac-latest >/dev/null 2>&1 || \
             gh release create mac-latest --title "Kestrel for Mac" --prerelease \
               --notes "The latest Kestrel for Mac, signed with Developer ID and notarized. Built from ${GITHUB_SHA::7}."
-          gh release upload mac-latest "$RUNNER_TEMP/Kestrel.dmg" --clobber
+          gh release upload mac-latest "$RUNNER_TEMP/Kestrel.dmg" "$RUNNER_TEMP/feed/appcast.xml" --clobber
           gh release edit mac-latest --notes "The latest Kestrel for Mac (build $BUILD_NUMBER), signed with Developer ID and notarized. Built from ${GITHUB_SHA::7}."
+          gh release delete-asset "mac-b$BUILD_NUMBER" appcast-tampered.xml --yes || true
+          # keep the last five builds' releases
+          gh release list --limit 100 --json tagName -q '.[].tagName' | grep -E '^mac-b[0-9]+$' | sort -t b -k2 -n -r | tail -n +6 |
+            while read -r old; do gh release delete "$old" --yes --cleanup-tag; done
       - name: Clean up the key and keychain
         if: always()
         run: |
