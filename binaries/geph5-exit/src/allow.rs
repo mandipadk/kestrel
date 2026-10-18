@@ -45,6 +45,10 @@ fn is_ipv4_globally_routable(ip: &std::net::Ipv4Addr) -> bool {
 }
 
 fn is_ipv6_globally_routable(ip: &std::net::Ipv6Addr) -> bool {
+    // ::ffff:a.b.c.d is dialed over IPv4, so judge it as the IPv4 address
+    if let Some(ipv4) = ip.to_ipv4_mapped() {
+        return is_ipv4_globally_routable(&ipv4);
+    }
     !ip.is_loopback()
         && !ip.is_unspecified()
         && !ip.is_multicast()
@@ -95,6 +99,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn ipv4_mapped_private_addresses_are_blocked() {
+        for ip in ["::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254"] {
+            let addr = SocketAddr::new(ip.parse().unwrap(), 80);
+            assert!(!proxy_allowed(addr, false, "tcp"), "allowed {addr}");
+        }
+        let addr = SocketAddr::new("::ffff:1.1.1.1".parse().unwrap(), 80);
+        assert!(proxy_allowed(addr, false, "tcp"), "blocked {addr}");
     }
 
     #[test]
