@@ -14,6 +14,8 @@ struct KestrelMacApp: App {
                         model.applySample(sample)
                     } else {
                         await model.load()
+                        // keep the tunnel extension installed and current
+                        if model.device != nil { await TunnelExtension.shared.activate() }
                     }
                 }
                 .onOpenURL { url in model.setUp(from: url.absoluteString) }
