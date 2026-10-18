@@ -210,6 +210,8 @@ struct Notice: View {
     let detail: String
     var button: String?
     var action: (() -> Void)?
+    /// the panel insets notices from its edges; windows align them with their content
+    var inset: CGFloat = 10
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -231,8 +233,8 @@ struct Notice: View {
         }
         .padding(10)
         .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, inset)
+        .padding(.bottom, inset == 0 ? 0 : 6)
     }
 }
 
@@ -373,7 +375,10 @@ struct WiFiSettings: View {
             Text("Trusted Wi-Fi").font(.system(size: 13, weight: .semibold))
             VStack(spacing: 0) {
                 List(model.trustedNetworks, id: \.self, selection: $selection) { network in
-                    Label(network, systemImage: "wifi")
+                    HStack(spacing: 6) {
+                        Image(systemName: "wifi").foregroundStyle(.secondary)
+                        Text(network)
+                    }
                 }
                 .listStyle(.bordered(alternatesRowBackgrounds: true))
                 .frame(height: 140)
