@@ -72,10 +72,25 @@ jobs:
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         run: cargo build --release -p geph5-client --lib --target aarch64-apple-ios
+      - name: Engine for the Simulator
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        run: |
+          rustup target add aarch64-apple-ios-sim
+          cargo build --release -p geph5-client --lib --target aarch64-apple-ios-sim
       - name: Generate the Xcode project
         run: |
           brew install xcodegen
           cd apps/ios && xcodegen generate
+      - name: Engine test (Simulator, real packets through the exit)
+        env:
+          TEST_RUNNER_KESTREL_CODE: ${{ secrets.KESTREL_CI_CODE }}
+        run: |
+          SIM=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "simulator $SIM"
+          cd apps/ios
+          xcodebuild test -project Kestrel.xcodeproj -scheme EngineTests -configuration Release \
+            -destination "id=$SIM" | xcbeautify || exit ${PIPESTATUS[0]}
       - name: API key
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
