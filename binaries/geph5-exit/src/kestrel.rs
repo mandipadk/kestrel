@@ -89,6 +89,46 @@ pub fn device_of(metadata: &serde_json::Value) -> Option<&str> {
     metadata.get(METADATA_KEY).and_then(|v| v.as_str())
 }
 
+/// Names a device can open through its own tunnel to talk to the exit
+/// itself. They never resolve or leave the exit, and only an authorized
+/// device's session can reach them.
+const INTERNAL_DOMAIN: &str = ".kestrel.internal";
+const PAUSE_SECS: u64 = 3600;
+
+/// Answers a request to one of the exit's internal names, or None if the
+/// destination is an ordinary one.
+pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
+    let host = dest.rsplit_once(':').map(|(h, _)| h).unwrap_or(dest);
+    let what = host.to_ascii_lowercase().strip_suffix(INTERNAL_DOMAIN)?.to_string();
+    match what.as_str() {
+        "status" => {}
+        "shield-pause" => shield::pause(device, PAUSE_SECS),
+        "shield-resume" => shield::resume(device),
+        _ => return Some(br#"{"error":"unknown request"}"#.to_vec()),
+    }
+    Some(device_report(device))
+}
+
+/// What a device may learn about itself.
+fn device_report(device: &str) -> Vec<u8> {
+    let usage = USAGE.get(device).map(|u| u.clone());
+    let (asn, country) = usage
+        .as_ref()
+        .and_then(|u| u.network.lock().unwrap().clone())
+        .unwrap_or_default();
+    let cfg = CONFIG_FILE.wait();
+    serde_json::to_vec(&serde_json::json!({
+        "device": device,
+        "stealth": usage.as_ref().is_some_and(|u| u.stealth.load(Ordering::Relaxed)),
+        "asn": asn,
+        "country": country,
+        "exit": { "country": cfg.country.alpha2(), "city": cfg.city },
+        "shield": shield::summary(device),
+        "now": now_secs(),
+    }))
+    .unwrap_or_default()
+}
+
 static FAILURES: LazyLock<Cache<IpAddr, u32>> = LazyLock::new(|| {
     Cache::builder()
         .time_to_live(Duration::from_secs(900))

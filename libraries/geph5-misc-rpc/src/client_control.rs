@@ -54,6 +54,10 @@ pub trait ControlProtocol {
     async fn latest_news(&self, lang: String) -> Result<Vec<NewsItem>, String>;
 
     async fn get_update_manifest(&self) -> Result<(serde_json::Value, String), String>;
+
+    /// Kestrel: asks the exit about this device through the tunnel.
+    /// `request` is "status", "shield-pause" or "shield-resume".
+    async fn kestrel_exit(&self, request: String) -> Result<serde_json::Value, String>;
 }
 
 #[derive(Serialize, Deserialize, Clone)]

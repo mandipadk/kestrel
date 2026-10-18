@@ -227,6 +227,28 @@ impl ControlProtocol for ControlProtocolImpl {
     async fn get_update_manifest(&self) -> Result<(serde_json::Value, String), String> {
         get_update_manifest().await.map_err(|e| format!("{:?}", e))
     }
+
+    async fn kestrel_exit(&self, request: String) -> Result<Value, String> {
+        use tokio::io::AsyncReadExt;
+        if !matches!(request.as_str(), "status" | "shield-pause" | "shield-resume") {
+            return Err(format!("unknown request {request}"));
+        }
+        if self.ctx.init().kestrel_device.is_none() {
+            return Err("not a Kestrel device".into());
+        }
+        let host = format!("{request}.kestrel.internal:1");
+        let body = async {
+            let mut conn = crate::session::open_conn(&self.ctx, "tcp", &host).await?;
+            let mut body = Vec::new();
+            conn.read_to_end(&mut body).await?;
+            anyhow::Ok(body)
+        };
+        let body = tokio::time::timeout(Duration::from_secs(15), body)
+            .await
+            .map_err(|_| "the exit did not answer in time".to_string())?
+            .map_err(|e| format!("{e:#}"))?;
+        serde_json::from_slice(&body).map_err(|e| e.to_string())
+    }
 }
 
 pub struct DummyControlProtocolTransport(pub ControlService<ControlProtocolImpl>);

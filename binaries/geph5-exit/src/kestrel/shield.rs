@@ -62,8 +62,33 @@ pub fn set_enabled(device: &str, on: bool) {
     ENABLED.insert(device.to_string(), on);
 }
 
-pub fn enabled(device: &str) -> bool {
+/// Devices that paused Shield from their app, until when. Kept in memory
+/// only: a restart ends every pause.
+static PAUSED: LazyLock<DashMap<String, u64>> = LazyLock::new(DashMap::new);
+
+pub fn pause(device: &str, secs: u64) {
+    PAUSED.insert(device.to_string(), now_secs() + secs);
+}
+
+pub fn resume(device: &str) {
+    PAUSED.remove(device);
+}
+
+fn paused_until(device: &str) -> u64 {
+    PAUSED
+        .get(device)
+        .map(|v| *v)
+        .filter(|until| *until > now_secs())
+        .unwrap_or(0)
+}
+
+/// Whether the owner has Shield on for this device (paused or not).
+pub fn switched_on(device: &str) -> bool {
     ENABLED.get(device).map(|v| *v).unwrap_or(true)
+}
+
+pub fn enabled(device: &str) -> bool {
+    switched_on(device) && paused_until(device) == 0
 }
 
 /// Whether Shield stops this device from reaching this host.
@@ -162,6 +187,9 @@ fn record_at(device: &str, blocked: Option<&str>, hour: u64) {
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct Summary {
     pub enabled: bool,
+    /// Paused from the device's app until this time (0: not paused).
+    #[serde(default)]
+    pub paused_until: u64,
     pub lookups_24h: u64,
     pub blocked_24h: u64,
     pub blocked_total: u64,
@@ -173,6 +201,16 @@ pub struct Summary {
 
 pub fn summaries() -> BTreeMap<String, Summary> {
     summaries_at(now_secs() / 3600)
+}
+
+/// One device's summary, even before it has made a lookup.
+pub fn summary(device: &str) -> Summary {
+    summaries().remove(device).unwrap_or_else(|| Summary {
+        enabled: switched_on(device),
+        paused_until: paused_until(device),
+        hourly: vec![0; HOURS_KEPT],
+        ..Default::default()
+    })
 }
 
 fn summaries_at(now_hour: u64) -> BTreeMap<String, Summary> {
@@ -201,7 +239,8 @@ fn summaries_at(now_hour: u64) -> BTreeMap<String, Summary> {
             top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             top.truncate(10);
             let summary = Summary {
-                enabled: enabled(name),
+                enabled: switched_on(name),
+                paused_until: paused_until(name),
                 lookups_24h: recent.iter().map(|h| h.lookups).sum(),
                 blocked_24h: recent.iter().map(|h| h.blocked).sum(),
                 blocked_total: dev.blocked_total,
@@ -407,6 +446,19 @@ mod tests {
         assert!(check_dial("t-on", "doubleclick.net:443").is_err());
         assert!(check_dial("t-on", "1.2.3.4:443").is_ok());
         assert!(check_dial("t-on", "[::1]:443").is_ok());
+    }
+
+    #[test]
+    fn a_pause_lets_lookups_through_until_resumed() {
+        *LISTS.write().unwrap() = Arc::new(lists(&["doubleclick.net"], &[]));
+        set_enabled("t-pause", true);
+        pause("t-pause", 3600);
+        assert!(dns_reply("t-pause", &query("doubleclick.net")).is_none());
+        assert!(summary("t-pause").paused_until > now_secs());
+        assert!(summary("t-pause").enabled);
+        resume("t-pause");
+        assert!(dns_reply("t-pause", &query("doubleclick.net")).is_some());
+        assert_eq!(summary("t-pause").paused_until, 0);
     }
 
     #[test]
