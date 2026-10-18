@@ -2,8 +2,9 @@ import Foundation
 import NetworkExtension
 import os
 
-/// Runs the Kestrel (Geph5) engine inside the packet tunnel: packets from the
-/// system go into the engine's IP stack, and its replies come back out.
+/// Runs the Kestrel (Geph5) engine inside the packet tunnel, on iPhone and
+/// Mac: packets from the system go into the engine's IP stack, and its
+/// replies come back out.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let log = Logger(subsystem: "dev.mandip.kestrel", category: "tunnel")
     private var running = false
@@ -12,7 +13,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         log.info("startTunnel")
         guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
               let saved = proto.providerConfiguration?["config"] as? String else {
-            completionHandler(fail("This iPhone has no Kestrel key yet. Open Kestrel and add it."))
+            completionHandler(fail("This device has no Kestrel key yet. Open Kestrel and add it."))
             return
         }
         let config: String
@@ -33,6 +34,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let v6 = NEIPv6Settings(addresses: ["fd89::2"], networkPrefixLengths: [128])
         v6.includedRoutes = [NEIPv6Route.default()]
         settings.ipv6Settings = v6
+        // Lookups go to the exit, which answers them (and applies Shield).
         let dns = NEDNSSettings(servers: ["1.1.1.1", "9.9.9.9"])
         dns.matchDomains = [""]
         settings.dnsSettings = dns
@@ -41,7 +43,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         setTunnelNetworkSettings(settings) { [weak self] error in
             guard let self else { return }
             if let error {
-                completionHandler(self.fail("iOS refused the tunnel settings: \(error.localizedDescription)"))
+                completionHandler(self.fail("The system refused the tunnel settings: \(error.localizedDescription)"))
                 return
             }
             do {
@@ -67,13 +69,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { exit(0) }
     }
 
-    /// The app asks for the engine's view of things to show on its details sheet.
+    /// The app asks the tunnel things it can't see itself:
+    ///   "report"              the engine's state and recent log lines
+    ///   "exit:<request>"      the exit's answer about this device (status,
+    ///                         shield-pause, shield-resume), via the tunnel
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
-        let report: [String: Any] = [
-            "state": Engine.connectionState(),
-            "logs": Engine.recentLogs(30),
-        ]
-        completionHandler?(try? JSONSerialization.data(withJSONObject: report))
+        let message = String(decoding: messageData, as: UTF8.self)
+        // Engine calls block; keep them off the provider's queue.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let reply: [String: Any]
+            if message.hasPrefix("exit:") {
+                switch Engine.exitReport(String(message.dropFirst("exit:".count))) {
+                case .success(let report): reply = ["exit": report]
+                case .failure(let err): reply = ["error": err.message]
+                }
+            } else {
+                reply = ["state": Engine.connectionState(), "logs": Engine.recentLogs(30)]
+            }
+            completionHandler?(try? JSONSerialization.data(withJSONObject: reply))
+        }
     }
 
     private func readFromSystem() {

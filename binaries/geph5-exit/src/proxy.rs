@@ -43,6 +43,12 @@ pub async fn proxy_stream(
             proxy_dns(stream, filter, device).await
         }
         OpenedTunnel::Udp { udp_socket } => proxy_udp(stream, udp_socket, ratelimit).await,
+        OpenedTunnel::Internal { body } => {
+            let mut stream = stream;
+            stream.write_all(&body).await?;
+            stream.flush().await?;
+            Ok(())
+        }
     }
 }
 
@@ -50,6 +56,8 @@ enum OpenedTunnel {
     Tcp { dest_tcp: TcpStream },
     Dns { filter: FilterOptions },
     Udp { udp_socket: UdpSocket },
+    /// Kestrel: a device asked the exit about itself.
+    Internal { body: Vec<u8> },
 }
 
 async fn open_tunnel(
@@ -64,6 +72,18 @@ async fn open_tunnel(
     let dest_host = cmd.host().to_string();
     let filter: FilterOptions =
         serde_json::from_value(sess_metadata["filter"].clone()).unwrap_or_default();
+    if let Some(device) = crate::kestrel::device_of(sess_metadata)
+        && let Some(body) = crate::kestrel::internal_request(device, &dest_host)
+    {
+        if is_rich {
+            let resp = RichTunnelResponse::Success {
+                resolved_addr: "0.0.0.0:0".parse()?,
+                open_ms: None,
+            };
+            geph5_misc_rpc::write_prepend_length(&serde_json::to_vec(&resp)?, stream).await?;
+        }
+        return Ok(OpenedTunnel::Internal { body });
+    }
     if let Some(device) = crate::kestrel::device_of(sess_metadata) {
         crate::kestrel::shield::check_dial(device, &dest_host)?;
     }
