@@ -28,7 +28,7 @@ struct Args {
     endpoint: String,
     /// All of the owner's exits (JSON list of {endpoint, pubkey, city}). When
     /// it exists, new configs carry every exit and the apps choose between them.
-    #[arg(long, env = "KESTREL_EXITS", default_value = "/etc/kestrel/exits.json")]
+    #[arg(long, env = "KESTREL_EXITS", default_value = "/var/lib/kestrel/exits.json")]
     exits: PathBuf,
     #[command(subcommand)]
     cmd: Cmd,
