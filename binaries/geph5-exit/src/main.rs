@@ -146,6 +146,16 @@ struct ConfigFile {
     /// Kestrel: destination ports no client may reach.
     #[serde(default = "default_blocked_ports")]
     blocked_ports: Vec<u16>,
+
+    /// Kestrel: also serve devices that use the plain (non-stealth) link.
+    /// Turn off once every device is on the stealth link: probes then get
+    /// no reply at all.
+    #[serde(default = "default_true")]
+    kestrel_allow_plain: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_device_ratelimit() -> u32 {

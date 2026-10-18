@@ -41,10 +41,47 @@ pub async fn listen_main() -> anyhow::Result<()> {
     let broker = broker_loop();
     if CONFIG_FILE.wait().broker.is_none() {
         // Kestrel private mode: no bridges, no public self-checks.
-        return (c2e, crate::kestrel::status_loop()).race().await;
+        let devices = CONFIG_FILE
+            .wait()
+            .kestrel_devices
+            .clone()
+            .context("no device file")?;
+        let state_dir = devices
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        return (
+            private_c2e_loop(),
+            crate::kestrel::status_loop(),
+            crate::kestrel::shield::shield_loop(state_dir, devices),
+        )
+            .race()
+            .await;
     }
     let google_selfcheck = crate::google_selfcheck::google_selfcheck_loop();
     (c2e, broker, b2e, google_selfcheck).race().await
+}
+
+/// Kestrel: plain and stealth devices share the client port.
+async fn private_c2e_loop() -> anyhow::Result<()> {
+    let cookie = sillad_sosistab3::Cookie::new(&geph5_misc_rpc::kestrel::stealth_cookie(
+        SIGNING_SECRET.verifying_key().as_bytes(),
+    ));
+    let mut listener = crate::kestrel::stealth::KestrelListener::bind(
+        CONFIG_FILE.wait().c2e_listen,
+        cookie,
+        CONFIG_FILE.wait().kestrel_allow_plain,
+    )
+    .await?;
+    loop {
+        let c2e_raw = listener.accept().await?;
+        geph5_rt::spawn(async move {
+            if let Err(err) = handle_client(c2e_raw).await {
+                tracing::debug!(err = debug(err), "private session ended");
+            }
+        })
+        .detach();
+    }
 }
 
 async fn c2e_loop() -> anyhow::Result<()> {
@@ -59,23 +96,6 @@ async fn c2e_loop() -> anyhow::Result<()> {
             }
         };
 
-        if CONFIG_FILE.wait().broker.is_none() {
-            let remote_ip = c2e_raw
-                .remote_addr()
-                .and_then(|a| a.parse::<SocketAddr>().ok())
-                .map(|a| a.ip());
-            let Some(remote_ip) = remote_ip else { continue };
-            if crate::kestrel::is_banned(remote_ip) {
-                continue;
-            }
-            geph5_rt::spawn(async move {
-                if let Err(err) = handle_client(c2e_raw).await {
-                    tracing::debug!(err = debug(err), "private session ended");
-                }
-            })
-            .detach();
-            continue;
-        }
         let test_addr = async {
             let remote_addr: SocketAddr = c2e_raw.remote_addr().unwrap().parse()?;
             let (asn, country) = ip_to_asn_country(remote_addr.ip()).await?;
@@ -191,8 +211,18 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     };
     let device = if private {
         match crate::kestrel::authorize(&client_hello) {
-            Ok(device) => Some(device),
+            Ok(device) => {
+                crate::kestrel::note_connection(
+                    &device,
+                    remote_ip,
+                    client.protocol() == "sosistab3",
+                );
+                Some(device)
+            }
             Err(err) => {
+                if let Some(name) = crate::kestrel::revoked_key_user(&client_hello) {
+                    crate::kestrel::alert_revoked_key(name, remote_ip);
+                }
                 tracing::warn!(
                     ip = debug(remote_ip),
                     err = display(&err),
@@ -285,7 +315,10 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
         if sess_metadata.is_none()
             && let Ok(new_sess_metadata) = serde_json::from_str::<serde_json::Value>(&metadata)
         {
-            sess_metadata = Some(Arc::new(new_sess_metadata));
+            sess_metadata = Some(Arc::new(match &device {
+                Some(device) => crate::kestrel::tag_metadata(Some(new_sess_metadata), device),
+                None => new_sess_metadata,
+            }));
             continue;
         }
 
@@ -308,9 +341,12 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
             continue;
         }
 
-        let sess_metadata = sess_metadata
-            .clone()
-            .unwrap_or_else(|| Arc::new(serde_json::Value::Null));
+        let sess_metadata = sess_metadata.clone().unwrap_or_else(|| {
+            Arc::new(match &device {
+                Some(device) => crate::kestrel::tag_metadata(None, device),
+                None => serde_json::Value::Null,
+            })
+        });
         let dialer = dialer.clone();
         geph5_rt::spawn(
             (

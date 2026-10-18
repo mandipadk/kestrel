@@ -23,6 +23,9 @@ pub struct KestrelDevice {
     pub name: String,
     /// The 32-byte ed25519 secret key, hex-encoded.
     pub secret: String,
+    /// Reach the exit over sosistab3 instead of plain TCP (see [`stealth_cookie`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stealth: bool,
 }
 
 impl KestrelDevice {
@@ -32,6 +35,7 @@ impl KestrelDevice {
         Self {
             name: name.to_string(),
             secret: hex::encode(key.to_bytes()),
+            stealth: true,
         }
     }
 
@@ -65,6 +69,15 @@ fn signed_message(device: &str, timestamp: u64, crypt_hello: &ClientCryptHello) 
     let mut hasher = blake3::Hasher::new_derive_key("kestrel device auth v1");
     hasher.update(&(device, timestamp, crypt_hello).stdcode());
     *hasher.finalize().as_bytes()
+}
+
+/// The sosistab3 cookie for a stealth link to the exit with this public key.
+///
+/// Only devices hold the exit's public key (it is never published: there is
+/// no broker), so a prober cannot complete the obfuscated handshake and gets
+/// nothing back, while the link itself looks like random bytes on the wire.
+pub fn stealth_cookie(exit_pubkey: &[u8; 32]) -> String {
+    hex::encode(blake3::derive_key("kestrel stealth cookie v1", exit_pubkey))
 }
 
 pub fn now_secs() -> u64 {
@@ -138,6 +151,22 @@ mod tests {
         let cred = DeviceCredential::sign(&dev, &h).unwrap();
         let pk = other.signing_key().unwrap().verifying_key();
         assert!(cred.verify(&pk, &h, now_secs()).is_err());
+    }
+
+    #[test]
+    fn stealth_cookie_depends_on_the_exit() {
+        let a = stealth_cookie(&[1; 32]);
+        assert_eq!(a, stealth_cookie(&[1; 32]));
+        assert_ne!(a, stealth_cookie(&[2; 32]));
+        assert_eq!(a.len(), 64);
+    }
+
+    #[test]
+    fn old_configs_without_stealth_still_parse() {
+        let dev: KestrelDevice =
+            serde_json::from_str(r#"{"name":"macbook","secret":"00"}"#).unwrap();
+        assert!(!dev.stealth);
+        assert!(KestrelDevice::generate("new").stealth);
     }
 
     #[test]
