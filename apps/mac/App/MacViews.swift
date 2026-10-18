@@ -11,6 +11,7 @@ let kestrelPage = URL(string: "https://kestrel.mandip.dev")!
 /// Control Center's modules.
 struct MenuBarPanel: View {
     @EnvironmentObject var model: TunnelModel
+    @ObservedObject private var updates = Updates.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -33,6 +34,11 @@ struct MenuBarPanel: View {
                 Notice(symbol: "exclamationmark.triangle", title: "The old Kestrel command is still on",
                        detail: "Run kestrel off in Terminal once. This app replaces it.")
             }
+            if let version = updates.waiting {
+                Notice(symbol: "arrow.down.circle", title: "Kestrel \(version) is ready",
+                       detail: "Install it now. Kestrel reopens by itself and your tunnel reconnects.",
+                       button: "Install Update…", action: { updates.check() })
+            }
 
             PanelDivider()
             if model.device == nil {
@@ -41,6 +47,9 @@ struct MenuBarPanel: View {
             }
             Button { NSWorkspace.shared.open(kestrelPage) } label: { RowLabel("Open Kestrel Page") }
                 .buttonStyle(PanelRowStyle())
+            Button { updates.check() } label: { RowLabel("Check for Updates…") }
+                .buttonStyle(PanelRowStyle())
+                .disabled(!updates.canCheck)
             SettingsLink { RowLabel("Settings…", shortcut: "⌘,") }
                 .buttonStyle(PanelRowStyle())
                 .keyboardShortcut(",")
@@ -318,6 +327,7 @@ struct MacSettingsView: View {
 
 struct GeneralSettings: View {
     @EnvironmentObject var model: TunnelModel
+    @ObservedObject private var updates = Updates.shared
     @State private var openAtLogin = LoginItem.enabled
     @State private var loginError: String?
 
@@ -350,10 +360,27 @@ struct GeneralSettings: View {
                     Text("Blocks ads, trackers and malware at the exit. Change it for each device on the Kestrel page.")
                 }
             }
+            Section {
+                Toggle(isOn: Binding(get: { updates.checksAutomatically }, set: { updates.setChecksAutomatically($0) })) {
+                    Text("Check for updates automatically")
+                    Text("Once a day. Kestrel only installs an update signed with its release key.")
+                }
+                Toggle(isOn: Binding(get: { updates.installsAutomatically }, set: { updates.setInstallsAutomatically($0) })) {
+                    Text("Download and install automatically")
+                    Text("The update is applied the next time Kestrel quits or the Mac restarts.")
+                }
+                .disabled(!updates.checksAutomatically)
+                LabeledContent {
+                    Button("Check Now") { updates.check() }.disabled(!updates.canCheck)
+                } label: {
+                    Text("Kestrel \(updates.version)")
+                    Text(updates.lastCheck.map { "Last checked \($0.formatted(.relative(presentation: .named)))" } ?? "Not checked yet")
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(height: 250)
+        .frame(height: 430)
     }
 
     private var shieldState: String {
