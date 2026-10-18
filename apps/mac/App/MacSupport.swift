@@ -86,40 +86,25 @@ final class TunnelExtension: NSObject, ObservableObject, OSSystemExtensionReques
 /// Says what the owner has to do for the tunnel extension, if anything.
 struct ExtensionNotice: View {
     @ObservedObject var ext = TunnelExtension.shared
+    /// the menu bar panel's shorter wording
+    var compact = false
 
     var body: some View {
         switch ext.state {
         case .needsApproval:
-            notice("Allow Kestrel's network extension",
-                   "macOS asks once. In System Settings, open General, Login Items & Extensions, Network Extensions, and turn Kestrel on.",
+            Notice(symbol: "puzzlepiece.extension", title: "Allow Kestrel's network extension",
+                   detail: compact ? "macOS asks once, in Login Items & Extensions."
+                                   : "macOS asks once. In System Settings, open General, Login Items & Extensions, Network Extensions, and turn Kestrel on.",
                    button: "Open System Settings") { TunnelExtension.openSettings() }
         case .notInApplications:
-            notice("Move Kestrel to Applications",
-                   "macOS only installs its network extension from there. Drag Kestrel into Applications and open it again.",
-                   button: nil, action: nil)
+            Notice(symbol: "folder", title: "Move Kestrel to Applications",
+                   detail: "macOS only installs its network extension from there. Drag Kestrel into Applications and open it again.")
         case .failed(let message):
-            notice("The network extension didn't install", message, button: "Try again") {
-                Task { await ext.activate() }
-            }
+            Notice(symbol: "exclamationmark.triangle", title: "The network extension didn't install",
+                   detail: message, button: "Try Again") { Task { await ext.activate() } }
         default:
             EmptyView()
         }
-    }
-
-    private func notice(_ title: String, _ detail: String, button: String?, action: (() -> Void)?) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "puzzlepiece.extension").foregroundStyle(Ink.accent)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.geist(14, .semibold))
-                Text(detail).font(.geist(13)).foregroundStyle(Ink.muted).fixedSize(horizontal: false, vertical: true)
-                if let button, let action {
-                    Button(button, action: action).font(.geist(13, .medium)).padding(.top, 4)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.raise, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
