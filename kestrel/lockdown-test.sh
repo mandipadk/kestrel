@@ -90,7 +90,12 @@ if [[ "${1:-}" == "--live" ]]; then
       || make_config lockdown-probe "$PROBE"
   fi
   # this exit's own key (on the second exit it differs from the one the probe was made with)
-  sed "s#direct: .*#direct: $ENDPOINT/$("$CTL" --signing-secret "$SECRET" pubkey)#" "$PROBE" > "$WORK/probe.yaml"
+  python3 - "$PROBE" "$ENDPOINT/$("$CTL" --signing-secret "$SECRET" pubkey)" > "$WORK/probe.yaml" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+cfg["exit_constraint"] = {"direct": sys.argv[2]}
+print(yaml.safe_dump(cfg))
+PY
 else
   BIN=${1:?usage: lockdown-test.sh <bin-dir> | --live}
   CLIENT=$BIN/geph5-client
