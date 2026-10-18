@@ -8,7 +8,7 @@ name: KestrelMac
 options:
   bundleIdPrefix: dev.mandip
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 settings:
   base:
@@ -43,6 +43,9 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         ATSApplicationFontsPath: "."
         ITSAppUsesNonExemptEncryption: false
+        # a menu bar app: no Dock icon and no main window
+        LSUIElement: true
+        NSSystemExtensionUsageDescription: Kestrel's tunnel runs as a network extension that sends this Mac's traffic through your Frankfurt exit.
         NSHumanReadableCopyright: Kestrel, a private Geph exit. MPL 2.0.
         NSLocationUsageDescription: macOS only tells an app your Wi-Fi network's name with this permission. Kestrel uses it to trust Wi-Fi you choose and never reads your location.
         NSLocationWhenInUseUsageDescription: macOS only tells an app your Wi-Fi network's name with this permission. Kestrel uses it to trust Wi-Fi you choose and never reads your location.
@@ -63,6 +66,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel
         PRODUCT_NAME: Kestrel
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         PROVISIONING_PROFILE_SPECIFIER: ${MAC_APP_PROFILE}
     dependencies:
       - target: KestrelTunnel
@@ -77,6 +81,9 @@ targets:
       path: Tunnel/Info.plist
       properties:
         CFBundleDisplayName: Kestrel Tunnel
+        # macOS only files a system extension under a category (here, network
+        # extensions) when its package type is SYSX
+        CFBundlePackageType: SYSX
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)

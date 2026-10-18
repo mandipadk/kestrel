@@ -2,389 +2,506 @@ import AppKit
 import CoreLocation
 import SwiftUI
 
-struct MacRootView: View {
-    @EnvironmentObject var model: TunnelModel
+let kestrelPage = URL(string: "https://kestrel.mandip.dev")!
 
-    var body: some View {
-        ZStack {
-            Ink.bg.ignoresSafeArea()
-            if !model.loaded {
-                ProgressView().controlSize(.small).tint(Ink.muted)
-            } else if model.device == nil {
-                MacWelcomeView().transition(.opacity)
-            } else {
-                MacHomeView().transition(.opacity)
-            }
-        }
-        .frame(width: 400)
-        .frame(minHeight: 640)
-        .animation(.easeOut(duration: 0.25), value: model.device?.name)
-        .foregroundStyle(Ink.ink)
-        .preferredColorScheme(.dark)
-    }
-}
+// MARK: - Menu bar panel
 
-// MARK: - Welcome
-
-struct MacWelcomeView: View {
-    @EnvironmentObject var model: TunnelModel
-    @State private var code = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Wordmark().padding(.top, 36)
-            Spacer()
-            Text("Your own way out,\nthrough Frankfurt.")
-                .font(.geist(32, .semibold))
-                .tracking(-1.0)
-                .lineSpacing(2)
-            Text("Kestrel only lets in devices you've added. On the Kestrel page, add this Mac and choose Open in Kestrel, or copy its setup code and paste it here.")
-                .font(.geist(15))
-                .foregroundStyle(Ink.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 16)
-            Spacer()
-            TextField("kestrel1:…", text: $code)
-                .textFieldStyle(.plain)
-                .font(.geistMono(13))
-                .padding(.horizontal, 16)
-                .frame(height: 48)
-                .background(Ink.raise, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Ink.line))
-                .onSubmit { model.setUp(from: code) }
-            ExtensionNotice().padding(.top, 12)
-            if let err = model.error {
-                Text(err).font(.geist(13)).foregroundStyle(Ink.danger).padding(.top, 12)
-            }
-            PrimaryButton(title: code.isEmpty ? "Paste setup code" : "Add this Mac",
-                          systemImage: code.isEmpty ? "doc.on.clipboard" : "key", height: 48) {
-                if code.isEmpty { code = NSPasteboard.general.string(forType: .string) ?? "" }
-                model.setUp(from: code)
-            }
-            .padding(.top, 16)
-        }
-        .padding(.horizontal, 32)
-        .padding(.bottom, 32)
-    }
-}
-
-// MARK: - Home
-
-struct MacHomeView: View {
-    @EnvironmentObject var model: TunnelModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Spacer()
-                SettingsButton()
-            }
-            .padding(.top, 8)
-
-            HStack(spacing: 12) {
-                StatusDot(state: model.dotState)
-                Text(model.statusWord)
-                    .font(.geist(36, .semibold))
-                    .tracking(-1.2)
-                    .contentTransition(.opacity)
-            }
-            .animation(.easeOut(duration: 0.2), value: model.statusWord)
-            .padding(.top, 16)
-            Text(model.statusLine)
-                .font(.geist(15))
-                .foregroundStyle(Ink.muted)
-                .padding(.top, 8)
-
-            VStack(spacing: 0) {
-                FactRow(label: "Seen as", value: model.publicIP ?? (model.isOn ? "checking…" : "your own address"), mono: model.publicIP != nil, minHeight: 44)
-                FactRow(label: "Exit", value: "Frankfurt", mono: false, minHeight: 44)
-                FactRow(label: "Link", value: model.linkDescription, mono: false, minHeight: 44)
-                FactRow(label: "This Mac", value: model.device?.name ?? "", mono: true, minHeight: 44)
-            }
-            .padding(.top, 28)
-
-            ExtensionNotice().padding(.top, 16)
-            if model.legacyProxyOn {
-                LegacyNotice().padding(.top, 16)
-            }
-
-            ShieldPanel(shield: model.report?.shield, connected: model.isOn, topCount: 4) { paused in
-                Task { await model.setShieldPaused(paused) }
-            }
-            .padding(.top, 20)
-            .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
-            .padding(.top, 8)
-
-            Spacer(minLength: 24)
-
-            if let err = model.error {
-                Text(err).font(.geist(13)).foregroundStyle(Ink.danger).padding(.bottom, 12)
-                    .textSelection(.enabled)
-            }
-            PrimaryButton(title: model.isOn || model.isBusy ? "Disconnect" : "Connect",
-                          systemImage: model.isOn || model.isBusy ? "stop.fill" : "power",
-                          inverted: model.isOn || model.isBusy, height: 48) {
-                Task { await model.toggle() }
-            }
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 32)
-        .padding(.bottom, 32)
-    }
-}
-
-/// The old command-line Kestrel set system proxies; with the app on too,
-/// traffic would go through Frankfurt twice.
-struct LegacyNotice: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.accent)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("The old Kestrel command is still on").font(.geist(14, .semibold))
-                Text("Run kestrel off in Terminal once. This app replaces it.")
-                    .font(.geist(13)).foregroundStyle(Ink.muted)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.raise, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-struct SettingsButton: View {
-    var body: some View {
-        Button {
-            NSApp.activate(ignoringOtherApps: true)
-            if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-            }
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 15))
-                .foregroundStyle(Ink.muted)
-                .frame(width: 32, height: 32)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Settings")
-        .accessibilityLabel("Settings")
-    }
-}
-
-// MARK: - Menu bar
-
+/// What the wing in the menu bar opens: a switch to connect, the facts that
+/// matter while connected, Shield, and menu-style rows. Sized and styled like
+/// Control Center's modules.
 struct MenuBarPanel: View {
     @EnvironmentObject var model: TunnelModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            header
+            if model.device != nil && model.isOn {
+                connected
+            }
+            if let err = model.error {
+                Text(err)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
+            ExtensionNotice(compact: true)
+            if model.legacyProxyOn {
+                Notice(symbol: "exclamationmark.triangle", title: "The old Kestrel command is still on",
+                       detail: "Run kestrel off in Terminal once. This app replaces it.")
+            }
+
+            PanelDivider()
             if model.device == nil {
-                Text("Kestrel isn't set up on this Mac yet.")
-                    .font(.geist(14))
-                    .foregroundStyle(Ink.muted)
-                    .padding(.bottom, 16)
-            } else {
-                HStack(spacing: 10) {
-                    StatusDot(state: model.dotState)
-                    Text(model.statusWord).font(.geist(20, .semibold)).tracking(-0.5)
-                }
-                Text(model.publicIP.map { "Seen as \($0)" } ?? model.statusLine)
-                    .font(model.publicIP == nil ? .geist(13) : .geistMono(12))
-                    .foregroundStyle(Ink.muted)
-                    .padding(.top, 4)
-
-                if model.isOn, let shield = model.report?.shield, shield.active {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Shield").font(.geist(13, .medium))
-                        Spacer()
-                        Text("\(shield.blocked24h.formatted()) blocked in 24 h").font(.geist(13)).foregroundStyle(Ink.muted)
-                    }
-                    .padding(.top, 16)
-                    HourStrip(hourly: shield.hourly).frame(height: 20).padding(.top, 8)
-                }
-
-                PrimaryButton(title: model.isOn || model.isBusy ? "Disconnect" : "Connect",
-                              systemImage: model.isOn || model.isBusy ? "stop.fill" : "power",
-                              inverted: model.isOn || model.isBusy, height: 40) {
-                    Task { await model.toggle() }
-                }
-                .padding(.vertical, 16)
+                Button { SetupView.open(openWindow) } label: { RowLabel("Set Up This Mac…") }
+                    .buttonStyle(PanelRowStyle())
             }
-            Divider().overlay(Ink.line)
-            MenuRow(title: "Open Kestrel") {
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            MenuRow(title: "Quit Kestrel") { NSApp.terminate(nil) }
+            Button { NSWorkspace.shared.open(kestrelPage) } label: { RowLabel("Open Kestrel Page") }
+                .buttonStyle(PanelRowStyle())
+            SettingsLink { RowLabel("Settings…", shortcut: "⌘,") }
+                .buttonStyle(PanelRowStyle())
+                .keyboardShortcut(",")
+                .simultaneousGesture(TapGesture().onEnded { NSApp.activate() })
+            PanelDivider()
+            Button { NSApp.terminate(nil) } label: { RowLabel("Quit Kestrel", shortcut: "⌘Q") }
+                .buttonStyle(PanelRowStyle())
+                .keyboardShortcut("q")
         }
-        .padding(16)
-        .frame(width: 280)
-        .background(Ink.bg)
-        .foregroundStyle(Ink.ink)
-        .preferredColorScheme(.dark)
+        .padding(.vertical, 6)
+        .frame(width: 300)
+        .animation(.easeOut(duration: 0.2), value: model.isOn)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("Kestrel").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Toggle("Connected", isOn: Binding(
+                    get: { model.isOn || model.isBusy },
+                    set: { on in if on != (model.isOn || model.isBusy) { Task { await model.toggle() } } }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .disabled(model.device == nil)
+                .help(model.isOn ? "Disconnect" : "Connect through Frankfurt")
+            }
+            HStack(spacing: 6) {
+                Circle().fill(dotColor).frame(width: 7, height: 7)
+                Text(summary).foregroundStyle(.secondary)
+            }
+            .font(.system(size: 13))
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    private var dotColor: Color {
+        model.isOn ? Ink.accent : model.isBusy ? Ink.accent.opacity(0.5) : Color.secondary.opacity(0.5)
+    }
+
+    private var summary: String {
+        if model.device == nil { return "Not set up on this Mac yet" }
+        if model.isOn { return "Connected through Frankfurt" }
+        if model.isBusy { return "\(model.statusWord)…" }
+        return "Off. Traffic goes the usual way"
+    }
+
+    @ViewBuilder private var connected: some View {
+        VStack(spacing: 4) {
+            KeyValue("Seen as", model.publicIP ?? "checking…", mono: model.publicIP != nil)
+            KeyValue("Link", model.linkDescription)
+            if let since = model.connectedSince {
+                KeyValue("Connected", "since \(since.formatted(date: .omitted, time: .shortened))")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+
+        if let shield = model.report?.shield, shield.on {
+            PanelDivider()
+            HStack(alignment: .firstTextBaseline) {
+                Text("Shield").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Text(shield.paused
+                     ? "Paused until \((shield.pausedUntil ?? Date()).formatted(date: .omitted, time: .shortened))"
+                     : "\(shield.blocked24h.formatted()) blocked in 24 h")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 2)
+            HourStrip(hourly: shield.hourly, dim: shield.paused)
+                .frame(height: 18)
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
+            Button { Task { await model.setShieldPaused(!shield.paused) } } label: {
+                RowLabel(shield.paused ? "Resume Shield" : "Pause Shield for 1 Hour")
+            }
+            .buttonStyle(PanelRowStyle())
+        }
     }
 }
 
-struct MenuRow: View {
-    let title: String
-    let action: () -> Void
-    @State private var hover = false
+struct KeyValue: View {
+    let key: String
+    let value: String
+    var mono = false
+
+    init(_ key: String, _ value: String, mono: Bool = false) {
+        self.key = key
+        self.value = value
+        self.mono = mono
+    }
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.geist(14))
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                .padding(.horizontal, 8)
-                .background(hover ? Ink.raise : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .contentShape(Rectangle())
+        HStack {
+            Text(key).foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(mono ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                .textSelection(.enabled)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, -8)
-        .onHover { hover = $0 }
+        .font(.system(size: 13))
+    }
+}
+
+struct PanelDivider: View {
+    var body: some View {
+        Divider().padding(.horizontal, 14).padding(.vertical, 5)
+    }
+}
+
+struct RowLabel: View {
+    let title: String
+    var shortcut: String?
+
+    init(_ title: String, shortcut: String? = nil) {
+        self.title = title
+        self.shortcut = shortcut
+    }
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            if let shortcut { Text(shortcut).foregroundStyle(.tertiary) }
+        }
+        .font(.system(size: 13))
+    }
+}
+
+/// A row that highlights under the pointer, like the rows in Control Center.
+struct PanelRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PanelRow(configuration: configuration)
+    }
+
+    private struct PanelRow: View {
+        let configuration: Configuration
+        @State private var hover = false
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            configuration.label
+                .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                .padding(.horizontal, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.primary.opacity(configuration.isPressed ? 0.14 : hover ? 0.08 : 0))
+                )
+                .contentShape(Rectangle())
+                .padding(.horizontal, 5)
+                .opacity(enabled ? 1 : 0.4)
+                .onHover { hover = $0 }
+        }
+    }
+}
+
+/// Something the owner has to do, shown inline.
+struct Notice: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    var button: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .foregroundStyle(Ink.accent)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if let button, let action {
+                    Button(button, action: action).controlSize(.small).padding(.top, 4)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+}
+
+// MARK: - Setup window
+
+/// Shown only until this Mac has a key, or when a kestrel1: link fails.
+struct SetupView: View {
+    static let windowID = "setup"
+
+    static func open(_ openWindow: OpenWindowAction) {
+        openWindow(id: windowID)
+        NSApp.activate()
+    }
+
+    @EnvironmentObject var model: TunnelModel
+    @Environment(\.dismissWindow) private var dismissWindow
+    @State private var code = ""
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            KestrelMark().frame(width: 64, height: 64)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Add this Mac to Kestrel").font(.system(size: 13, weight: .semibold))
+                Text("On the Kestrel page, add a Mac and choose Open in Kestrel. Or copy its setup code and paste it here.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                TextField("kestrel1:…", text: $code)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12, design: .monospaced))
+                    .onSubmit(add)
+                    .padding(.top, 12)
+                ExtensionNotice(compact: false).padding(.top, 10)
+                if let err = model.error {
+                    Text(err)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                }
+                HStack {
+                    Button("Open Kestrel Page") { NSWorkspace.shared.open(kestrelPage) }
+                    Spacer()
+                    Button("Paste") { code = NSPasteboard.general.string(forType: .string) ?? code }
+                    Button("Add This Mac", action: add)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(.top, 16)
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .frame(width: 460)
+        .onChange(of: model.device?.name) { _, name in
+            if name != nil { dismissWindow(id: Self.windowID) }
+        }
+    }
+
+    private func add() {
+        model.setUp(from: code)
     }
 }
 
 // MARK: - Settings
 
 struct MacSettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            WiFiSettings()
+                .tabItem { Label("Wi-Fi", systemImage: "wifi") }
+            ThisMacSettings()
+                .tabItem { Label("This Mac", systemImage: "laptopcomputer") }
+        }
+        .frame(width: 500)
+    }
+}
+
+struct GeneralSettings: View {
     @EnvironmentObject var model: TunnelModel
     @State private var openAtLogin = LoginItem.enabled
-    @State private var report = ""
-    @State private var showReport = false
-    @State private var confirmForget = false
     @State private var loginError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Toggle(isOn: Binding(get: { model.onDemand }, set: { v in Task { await model.setOnDemand(v) } })) {
-                SettingText(title: "Connect automatically", detail: "Kestrel comes on by itself on any network, except Wi-Fi you trust.")
-            }
-            .toggleStyle(.switch)
-            .tint(Ink.accent)
-            .disabled(model.device == nil)
-            .padding(.vertical, 12)
-
-            MacTrustedNetworks().padding(.bottom, 12)
-
-            Divider().overlay(Ink.line)
-            Toggle(isOn: Binding(get: { openAtLogin }, set: { on in
-                do {
-                    try LoginItem.set(on)
-                    loginError = nil
-                } catch {
-                    loginError = error.localizedDescription
+        Form {
+            Section {
+                Toggle(isOn: Binding(get: { model.onDemand }, set: { v in Task { await model.setOnDemand(v) } })) {
+                    Text("Connect automatically")
+                    Text("On every network except Wi-Fi you trust.")
                 }
-                openAtLogin = LoginItem.enabled
-            })) {
-                SettingText(title: "Open at login", detail: loginError ?? "Keep Kestrel in the menu bar from the moment you sign in.")
-            }
-            .toggleStyle(.switch)
-            .tint(Ink.accent)
-            .padding(.vertical, 12)
-
-            Divider().overlay(Ink.line)
-            HStack {
-                SettingText(title: "Connection details", detail: "The engine's state and recent log lines, to copy into a report.")
-                Spacer()
-                Button("Show") {
-                    Task {
-                        report = await model.engineReport()
-                        showReport = true
+                .disabled(model.device == nil)
+                Toggle(isOn: Binding(get: { openAtLogin }, set: { on in
+                    do {
+                        try LoginItem.set(on)
+                        loginError = nil
+                    } catch {
+                        loginError = error.localizedDescription
                     }
+                    openAtLogin = LoginItem.enabled
+                })) {
+                    Text("Open at login")
+                    Text(loginError ?? "Keep Kestrel in the menu bar from the moment you sign in.")
                 }
             }
-            .padding(.vertical, 12)
-
-            Divider().overlay(Ink.line)
-            HStack {
-                SettingText(title: "Remove the key from this Mac", detail: "To shut this Mac out completely, revoke it on the Kestrel page too.")
-                Spacer()
-                Button("Remove…", role: .destructive) { confirmForget = true }
-                    .disabled(model.device == nil)
+            Section {
+                LabeledContent {
+                    Text(shieldState).foregroundStyle(.secondary)
+                } label: {
+                    Text("Shield")
+                    Text("Blocks ads, trackers and malware at the exit. Change it for each device on the Kestrel page.")
+                }
             }
-            .padding(.vertical, 12)
         }
-        .padding(24)
-        .frame(width: 460)
-        .background(Ink.bg)
-        .foregroundStyle(Ink.ink)
-        .sheet(isPresented: $showReport) { MacReportSheet(report: report) }
-        .confirmationDialog("Remove the key?", isPresented: $confirmForget) {
-            Button("Remove", role: .destructive) { Task { await model.forget() } }
-        } message: {
-            Text("You'll need a new setup code to connect again.")
-        }
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(height: 250)
+    }
+
+    private var shieldState: String {
+        guard let shield = model.report?.shield else { return "Shown when connected" }
+        if !shield.on { return "Off" }
+        return shield.paused ? "Paused" : "On"
     }
 }
 
-struct SettingText: View {
-    let title: String
-    let detail: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.geist(14, .medium))
-            Text(detail).font(.geist(13)).foregroundStyle(Ink.muted).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-struct MacTrustedNetworks: View {
+struct WiFiSettings: View {
     @EnvironmentObject var model: TunnelModel
+    @State private var selection: String?
     @State private var adding = false
     @State private var name = ""
     @StateObject private var location = LocationGate()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Trusted Wi-Fi").font(.geist(12, .medium)).foregroundStyle(Ink.muted)
-            ForEach(model.trustedNetworks, id: \.self) { network in
-                HStack {
-                    Image(systemName: "wifi").foregroundStyle(Ink.muted)
-                    Text(network).font(.geist(14))
-                    Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Trusted Wi-Fi").font(.system(size: 13, weight: .semibold))
+            VStack(spacing: 0) {
+                List(model.trustedNetworks, id: \.self, selection: $selection) { network in
+                    Label(network, systemImage: "wifi")
+                }
+                .listStyle(.bordered(alternatesRowBackgrounds: true))
+                .frame(height: 140)
+                .overlay(alignment: .center) {
+                    if model.trustedNetworks.isEmpty {
+                        Text("No trusted networks").foregroundStyle(.tertiary)
+                    }
+                }
+                HStack(spacing: 0) {
+                    Button { Task { await startAdding() } } label: {
+                        Image(systemName: "plus").frame(width: 24, height: 20)
+                    }
+                    .help("Trust a Wi-Fi network")
+                    Divider().frame(height: 14)
                     Button {
-                        Task { await model.setTrusted(model.trustedNetworks.filter { $0 != network }) }
+                        guard let s = selection else { return }
+                        selection = nil
+                        Task { await model.setTrusted(model.trustedNetworks.filter { $0 != s }) }
                     } label: {
-                        Image(systemName: "minus.circle").foregroundStyle(Ink.muted)
+                        Image(systemName: "minus").frame(width: 24, height: 20)
                     }
-                    .buttonStyle(.plain)
-                    .help("Stop trusting \(network)")
+                    .disabled(selection == nil)
+                    .help("Stop trusting the selected network")
+                    Spacer()
                 }
-                .frame(minHeight: 32)
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 2)
+                .background(Color.primary.opacity(0.03))
+                .overlay(alignment: .top) { Divider() }
             }
-            if adding {
-                HStack {
-                    TextField("Network name", text: $name).textFieldStyle(.roundedBorder).font(.geist(14)).onSubmit(save)
-                    Button("Add", action: save).disabled(name.isEmpty)
-                    Button("Cancel") { adding = false }
-                }
-                .padding(.top, 8)
-            } else {
-                Button {
-                    Task {
-                        // macOS only names the Wi-Fi to apps allowed to use location
-                        await location.ask()
-                        name = await model.currentNetwork() ?? ""
-                        adding = true
-                    }
-                } label: {
-                    Label("Trust a Wi-Fi network", systemImage: "plus").font(.geist(14))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 8)
-            }
+            .overlay(RoundedRectangle(cornerRadius: 1).stroke(Color.primary.opacity(0.12)))
+            Text("With Connect automatically on, Kestrel stays off on these networks. Adding one asks for location access once, because macOS only tells apps the Wi-Fi name with it. Kestrel never reads your location.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .animation(.easeOut(duration: 0.2), value: model.trustedNetworks)
+        .padding(20)
+        .frame(height: 270, alignment: .top)
+        .disabled(model.device == nil)
+        .sheet(isPresented: $adding) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Trust a Wi-Fi network").font(.system(size: 13, weight: .semibold))
+                TextField("Network name", text: $name).textFieldStyle(.roundedBorder).onSubmit(save)
+                HStack {
+                    Spacer()
+                    Button("Cancel", role: .cancel) { adding = false }.keyboardShortcut(.cancelAction)
+                    Button("Trust", action: save).keyboardShortcut(.defaultAction).disabled(name.isEmpty)
+                }
+            }
+            .padding(20)
+            .frame(width: 320)
+        }
+    }
+
+    private func startAdding() async {
+        // macOS only names the Wi-Fi to apps allowed to use location
+        await location.ask()
+        name = await model.currentNetwork() ?? ""
+        adding = true
     }
 
     private func save() {
-        let n = name
+        let n = name.trimmingCharacters(in: .whitespaces)
         adding = false
         name = ""
+        guard !n.isEmpty else { return }
         Task { await model.setTrusted(model.trustedNetworks + [n]) }
+    }
+}
+
+struct ThisMacSettings: View {
+    @EnvironmentObject var model: TunnelModel
+    @ObservedObject private var ext = TunnelExtension.shared
+    @State private var report = ""
+    @State private var showReport = false
+    @State private var confirmRemove = false
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Device") {
+                    Text(model.device?.name ?? "Not set up").font(.system(size: 12, design: .monospaced))
+                }
+                LabeledContent("Exit", value: model.report.map { "\($0.exitCity), \($0.exitCountry)" } ?? "Frankfurt")
+                LabeledContent("Link", value: model.linkDescription)
+                LabeledContent("Network extension", value: extensionState)
+            }
+            Section {
+                LabeledContent {
+                    Button("Show…") {
+                        Task {
+                            report = await model.engineReport()
+                            showReport = true
+                        }
+                    }
+                } label: {
+                    Text("Connection details")
+                    Text("The engine's state and recent log lines, to copy into a report.")
+                }
+                LabeledContent {
+                    Button("Remove…", role: .destructive) { confirmRemove = true }
+                        .disabled(model.device == nil)
+                } label: {
+                    Text("Remove the key from this Mac")
+                    Text("To shut this Mac out completely, revoke it on the Kestrel page too.")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(height: 330)
+        .sheet(isPresented: $showReport) { MacReportSheet(report: report) }
+        .confirmationDialog("Remove the key from this Mac?", isPresented: $confirmRemove) {
+            Button("Remove", role: .destructive) { Task { await model.forget() } }
+        } message: {
+            Text("You'll need a new setup code to connect again.")
+        }
+    }
+
+    private var extensionState: String {
+        switch ext.state {
+        case .ready: return "Allowed"
+        case .needsApproval: return "Waiting for you in System Settings"
+        case .activating: return "Installing…"
+        case .notInApplications: return "Move Kestrel to Applications"
+        case .failed: return "Didn't install"
+        case .unknown: return "Not checked yet"
+        }
     }
 }
 
@@ -418,9 +535,18 @@ struct MacReportSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Connection details").font(.system(size: 13, weight: .semibold))
+            ScrollView {
+                Text(report)
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay(Rectangle().stroke(Color.primary.opacity(0.12)))
             HStack {
-                Text("Connection details").font(.geist(18, .semibold))
                 Spacer()
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -428,16 +554,8 @@ struct MacReportSheet: View {
                 }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
-            ScrollView {
-                Text(report)
-                    .font(.geistMono(11))
-                    .foregroundStyle(Ink.muted)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
-        .padding(24)
+        .padding(20)
         .frame(width: 560, height: 420)
-        .background(Ink.bg)
     }
 }
