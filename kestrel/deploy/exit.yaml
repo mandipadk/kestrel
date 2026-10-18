@@ -10,3 +10,5 @@ kestrel_status: /var/lib/kestrel/status.json
 device_ratelimit: 25000
 blocked_ports: [25, 465, 587, 2525]
 free_ratelimit: 0
+# all of the owner exits; devices learn them from their report (see kestrelctl --exits)
+kestrel_exits: /var/lib/kestrel/exits.json
