@@ -44,7 +44,9 @@ No Geph broker, no Geph account, no paid plan.
   and published as `Kestrel.dmg` on the `mac-latest` release, which the page links.
   `.github/workflows/apple.yml` builds both, tests the engine against the live exit, keeps
   screenshots of every screen, and runs `apps/mac/check-extension.sh` on the built app and on
-  the stapled disk image, so an extension macOS would refuse never gets published.
+  the stapled disk image, then installs the app in `/Applications` on the runner and has it ask
+  the real `sysextd` for the tunnel (`--check-extension`); anything but "waiting for approval" fails
+  the build, so an extension macOS would refuse never gets published.
 - **Mac updates.** The Mac app updates itself with Sparkle (pinned in `apps/mac/project.yml`).
   CI signs each `.dmg` and the appcast itself with the EdDSA key in the `SPARKLE_ED_KEY` secret
   (backup: `~/.config/kestrel/sparkle` on Chicago); the app trusts only the matching
