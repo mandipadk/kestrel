@@ -82,6 +82,8 @@ targets:
         # Link the static archive by path: a -l search also finds the cdylib
         # and prefers it, leaving the extension needing a library iOS can't load.
         OTHER_LDFLAGS: [$(SRCROOT)/../../target/aarch64-apple-ios/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
+        # the Simulator (screenshots) needs the engine built for it
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]": [$(SRCROOT)/../../target/aarch64-apple-ios-sim/release/libgeph5_client.a, -lresolv, -lz, -framework, Security, -framework, SystemConfiguration]
         DEAD_CODE_STRIPPING: YES
   EngineTests:
     # Runs the iOS engine in the Simulator and sends real packets through the exit.
