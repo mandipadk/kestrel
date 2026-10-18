@@ -380,7 +380,7 @@ struct GeneralSettings: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(height: 430)
+        .frame(height: 372)
     }
 
     private var shieldState: String {

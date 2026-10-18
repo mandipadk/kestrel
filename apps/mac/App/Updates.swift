@@ -22,11 +22,14 @@ final class Updates: NSObject, ObservableObject {
 
     /// "1.2 (57)", the build being CI's run number
     var version: String {
+        if let sampleVersion { return sampleVersion }
         let info = Bundle.main.infoDictionary ?? [:]
         let short = info["CFBundleShortVersionString"] as? String ?? "?"
         guard let build = info["CFBundleVersion"] as? String, !build.isEmpty else { return short }
         return "\(short) (\(build))"
     }
+
+    private var sampleVersion: String?
 
     #if SPARKLE
     private var controller: SPUStandardUpdaterController!
@@ -62,6 +65,7 @@ final class Updates: NSObject, ObservableObject {
 
     /// Sample state for the screenshot tests.
     func applySample(waiting: String?, lastCheck: Date?) {
+        sampleVersion = "1.2 (24)"
         self.waiting = waiting
         self.lastCheck = lastCheck
         canCheck = true
