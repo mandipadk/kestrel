@@ -307,8 +307,10 @@ jobs:
             "$RELEASES/mac-b$BUILD_NUMBER/appcast.xml" "$RELEASES/mac-b$BUILD_NUMBER/appcast-tampered.xml" || rc=$?
           hdiutil detach "$MNT" >/dev/null
           exit $rc
+      # apps/HOLD: build and test everything (staging and the update test too)
+      # but release nothing, until the owner's exits are ready for the new apps
       - name: Publish for the Kestrel page and in-app updates
-        if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight)
+        if: steps.devid.outputs.ready == 'true' && (github.event_name == 'push' || inputs.testflight) && hashFiles('apps/HOLD') == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -441,7 +443,7 @@ jobs:
             echo "::error::the tunnel extension links a library that is not part of iOS"; exit 1
           fi
       - name: Upload to TestFlight
-        if: github.event_name == 'push' || inputs.testflight
+        if: (github.event_name == 'push' || inputs.testflight) && hashFiles('apps/HOLD') == ''
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
