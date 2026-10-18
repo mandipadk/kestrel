@@ -34,17 +34,15 @@ enum Engine {
             buffer.withUnsafeMutableBufferPointer { daemon_rpc(reqPtr, $0.baseAddress, Int32($0.count)) }
         }
         guard n > 0 else { return nil }
-        let data = buffer.withUnsafeBytes { Data($0.prefix(Int(n))) }
+        // The reply is a C string: drop the trailing NUL before parsing.
+        let data = buffer.withUnsafeBytes { Data($0.prefix(Int(n))) }.filter { $0 != 0 }
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["result"]
     }
 
-    /// "Connected", "Connecting" or "Disconnected", as the engine sees it.
+    /// "Connected", "Connecting" or "Disconnected", as the engine sees it
+    /// (conn_info answers {"state": ...}).
     static func connectionState() -> String {
-        switch rpc("conn_info") {
-        case let s as String: return s
-        case let d as [String: Any]: return d.keys.first ?? "unknown"
-        default: return "unknown"
-        }
+        (rpc("conn_info") as? [String: Any])?["state"] as? String ?? "unknown"
     }
 
     static func recentLogs(_ count: Int) -> [String] {
