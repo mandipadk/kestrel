@@ -128,9 +128,12 @@ enum EngineFixture {
                 let answers = Int(UInt16(dns[6]) << 8 | UInt16(dns[7]))
                 // the first A record: a compressed name, type A, class IN, TTL, length 4
                 var address: [UInt8]?
-                if let at = (12..<max(12, dns.count - 15)).first(where: { i in
-                    dns[i] == 0xc0 && dns[i + 2...i + 5].elementsEqual([0, 1, 0, 1]) && dns[i + 10] == 0 && dns[i + 11] == 4
-                }) { address = Array(dns[at + 12..<at + 16]) }
+                var i = 12
+                while address == nil, i + 16 <= dns.count {
+                    let isA: Bool = dns[i] == 0xc0 && dns[i + 2] == 0 && dns[i + 3] == 1 && dns[i + 4] == 0 && dns[i + 5] == 1
+                    if isA, dns[i + 10] == 0, dns[i + 11] == 4 { address = Array(dns[(i + 12)..<(i + 16)]) }
+                    i += 1
+                }
                 lock.lock()
                 replies[id] = (rcode, answers)
                 if let address { addresses[id] = address }
@@ -263,20 +266,28 @@ enum Packets {
     /// An IPv4/TCP packet (window 65535; MSS option on a SYN).
     static func tcp(from src: [UInt8], port sport: UInt16, to dst: [UInt8], port dport: UInt16,
                     seq: UInt32, ack: UInt32, flags: UInt8, mss: UInt16? = nil, payload: [UInt8] = []) -> Data {
-        func be32(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24), UInt8(v >> 16 & 0xff), UInt8(v >> 8 & 0xff), UInt8(v & 0xff)] }
-        let options: [UInt8] = mss.map { [2, 4, UInt8($0 >> 8), UInt8($0 & 0xff)] } ?? []
-        let headerLength = 20 + options.count
-        var seg: [UInt8] = [UInt8(sport >> 8), UInt8(sport & 0xff), UInt8(dport >> 8), UInt8(dport & 0xff)]
-            + be32(seq) + be32(ack)
-            + [UInt8(headerLength / 4) << 4, flags, 0xff, 0xff, 0, 0, 0, 0] + options + payload
-        var pseudo = src + dst + [0, 6, UInt8(seg.count >> 8), UInt8(seg.count & 0xff)] + seg
+        func be16(_ v: UInt16) -> [UInt8] { [UInt8(v >> 8), UInt8(v & 0xff)] }
+        func be32(_ v: UInt32) -> [UInt8] { be16(UInt16(v >> 16)) + be16(UInt16(v & 0xffff)) }
+        var options: [UInt8] = []
+        if let mss { options = [2, 4] + be16(mss) }
+        let offset = UInt8((20 + options.count) / 4) << 4
+        var seg: [UInt8] = be16(sport) + be16(dport)
+        seg += be32(seq)
+        seg += be32(ack)
+        seg += [offset, flags, 0xff, 0xff, 0, 0, 0, 0]
+        seg += options
+        seg += payload
+        var pseudo: [UInt8] = src + dst
+        pseudo += [0, 6] + be16(UInt16(seg.count))
+        pseudo += seg
         if pseudo.count % 2 == 1 { pseudo.append(0) }
         let sum = checksum(pseudo)
         seg[16] = UInt8(sum >> 8)
         seg[17] = UInt8(sum & 0xff)
-        let total = 20 + seg.count
-        var ip: [UInt8] = [0x45, 0, UInt8(total >> 8), UInt8(total & 0xff), 0x43, 0x21, 0x40, 0,
-                           64, 6, 0, 0] + src + dst
+        let total = UInt16(20 + seg.count)
+        var ip: [UInt8] = [0x45, 0] + be16(total)
+        ip += [0x43, 0x21, 0x40, 0, 64, 6, 0, 0]
+        ip += src + dst
         let ipSum = checksum(ip)
         ip[10] = UInt8(ipSum >> 8)
         ip[11] = UInt8(ipSum & 0xff)
@@ -287,11 +298,14 @@ enum Packets {
     static func tcpFlags(_ p: [UInt8]) -> UInt8 { p[tcpOffset(p) + 13] }
     static func tcpSeq(_ p: [UInt8]) -> UInt32 {
         let o = tcpOffset(p) + 4
-        return UInt32(p[o]) << 24 | UInt32(p[o + 1]) << 16 | UInt32(p[o + 2]) << 8 | UInt32(p[o + 3])
+        let high = UInt32(p[o]) << 24 | UInt32(p[o + 1]) << 16
+        let low = UInt32(p[o + 2]) << 8 | UInt32(p[o + 3])
+        return high | low
     }
     static func tcpPayload(_ p: [UInt8]) -> [UInt8] {
         let ihl = tcpOffset(p)
-        let total = min(p.count, Int(p[2]) << 8 | Int(p[3]))
+        let length = Int(p[2]) << 8 | Int(p[3])
+        let total = min(p.count, length)
         let start = ihl + Int(p[ihl + 12] >> 4) * 4
         return start < total ? Array(p[start..<total]) : []
     }
