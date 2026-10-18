@@ -62,7 +62,7 @@ quantum-safe, then `kestrel_require_pq: true` refuses classical handshakes. The 
 - Domain bypass: no Apple per-domain API; the US exit removes most of the need.
 
 ## Tasks
-- [ ] PQ: ml-kem hello variant in misc-rpc, exit and client; unit tests; lockdown checks
+- [x] PQ: ml-kem hello variant in misc-rpc, exit and client; 4 unit tests; lockdown 25/25 (control on the deployed build fails the 3 new checks)
 - [ ] Engine: exit list, nearest-first race, failover, pin; config + setup code v2
 - [ ] Second exit locally (Frankfurt, port 8443) to develop and test failover before Chicago exists
 - [ ] Chicago: OWNER Oracle ingress TCP 443 (errand); OWNER root install script (power sudo)

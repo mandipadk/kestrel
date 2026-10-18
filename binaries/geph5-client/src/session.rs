@@ -527,7 +527,25 @@ async fn client_auth(
         None => {
             tracing::debug!(server, "requiring full authentication");
             let my_esk = x25519_dalek::EphemeralSecret::random_from_rng(rand_core::OsRng);
-            let crypt_hello = ClientCryptHello::X25519((&my_esk).into());
+            // Kestrel: devices use the quantum-safe hybrid (X25519 + ML-KEM-768);
+            // Geph's own exits only know plain X25519
+            let kem = if ctx
+                .init()
+                .kestrel_device
+                .as_ref()
+                .is_some_and(|d| !d.classical_handshake)
+                && ctx.init().broker.is_none()
+            {
+                Some(geph5_misc_rpc::kestrel_pq::DeviceKem::generate())
+            } else {
+                None
+            };
+            let crypt_hello = match &kem {
+                Some((_, encapsulation_key)) => {
+                    ClientCryptHello::X25519MlKem768((&my_esk).into(), encapsulation_key.clone())
+                }
+                None => ClientCryptHello::X25519((&my_esk).into()),
+            };
             let credentials = match &ctx.init().kestrel_device {
                 Some(device) if ctx.init().broker.is_none() => {
                     geph5_misc_rpc::kestrel::DeviceCredential::sign(device, &crypt_hello)?
@@ -559,6 +577,25 @@ async fn client_auth(
                     anyhow::bail!(
                         "exit sent a shared-secret response to our full authentication request"
                     )
+                }
+                ExitHelloInner::X25519(_) if kem.is_some() => {
+                    // we asked for the hybrid: a classical answer is a downgrade
+                    anyhow::bail!("exit answered a quantum-safe hello with a classical one")
+                }
+                ExitHelloInner::X25519MlKem768(their_epk, ciphertext) => {
+                    let Some((device_kem, _)) = &kem else {
+                        anyhow::bail!("exit sent a quantum-safe answer we did not ask for")
+                    };
+                    let shared_secret = my_esk.diffie_hellman(&their_epk);
+                    let kem_secret = device_kem.finish(&ciphertext)?;
+                    let (write_key, read_key) = geph5_misc_rpc::kestrel_pq::session_keys(
+                        shared_secret.as_bytes(),
+                        &kem_secret,
+                    );
+                    tracing::debug!(server, "quantum-safe session keys agreed");
+                    Ok(EitherPipe::Right(ClientExitCryptPipe::new(
+                        pipe, read_key, write_key,
+                    )))
                 }
                 ExitHelloInner::X25519(their_epk) => {
                     let shared_secret = my_esk.diffie_hellman(&their_epk);

@@ -216,6 +216,10 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
                     &device,
                     remote_ip,
                     client.protocol() == "sosistab3",
+                    matches!(
+                        client_hello.crypt_hello,
+                        ClientCryptHello::X25519MlKem768(..)
+                    ),
                 );
                 Some(device)
             }
@@ -239,21 +243,32 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     };
 
     let keys: Option<([u8; 32], [u8; 32])>;
-    let exit_hello_inner: ExitHelloInner = match client_hello.crypt_hello {
+    let exit_hello_inner: ExitHelloInner = match &client_hello.crypt_hello {
         ClientCryptHello::SharedSecretChallenge(key) => {
             let real_ss = client.shared_secret().context("no shared secret")?;
-            let mac = blake3::keyed_hash(&key, real_ss);
+            let mac = blake3::keyed_hash(key, real_ss);
             keys = None;
             ExitHelloInner::SharedSecretResponse(mac)
         }
         ClientCryptHello::X25519(their_epk) => {
             let my_esk = EphemeralSecret::random_from_rng(rand_core::OsRng);
             let my_epk = PublicKey::from(&my_esk);
-            let shared_secret = my_esk.diffie_hellman(&their_epk);
+            let shared_secret = my_esk.diffie_hellman(their_epk);
             let read_key = blake3::derive_key("c2e", shared_secret.as_bytes());
             let write_key = blake3::derive_key("e2c", shared_secret.as_bytes());
             keys = Some((read_key, write_key));
             ExitHelloInner::X25519(my_epk)
+        }
+        ClientCryptHello::X25519MlKem768(their_epk, encapsulation_key) => {
+            let my_esk = EphemeralSecret::random_from_rng(rand_core::OsRng);
+            let my_epk = PublicKey::from(&my_esk);
+            let shared_secret = my_esk.diffie_hellman(their_epk);
+            let (ciphertext, kem_secret) =
+                geph5_misc_rpc::kestrel_pq::exit_encapsulate(encapsulation_key)?;
+            let (read_key, write_key) =
+                geph5_misc_rpc::kestrel_pq::session_keys(shared_secret.as_bytes(), &kem_secret);
+            keys = Some((read_key, write_key));
+            ExitHelloInner::X25519MlKem768(my_epk, ciphertext)
         }
     };
 
