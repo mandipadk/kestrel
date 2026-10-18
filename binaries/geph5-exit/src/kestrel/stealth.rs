@@ -77,28 +77,28 @@ async fn sniff(conn: &mut (impl AsyncRead + Unpin), cookie: Cookie) -> io::Resul
     buf.resize(ping_end, 0);
     conn.read_exact(&mut buf[2..]).await?;
     // A plain client now waits for its echo; a stealth client keeps
-        // sending the rest of its handshake.
-        let have = buf.len();
-        buf.resize(HANDSHAKE_LEN, 0);
-        let mut got = 0;
-        let more = tokio::time::timeout(SETTLE, async {
-            while have + got < HANDSHAKE_LEN {
-                let n = conn.read(&mut buf[have + got..]).await?;
-                if n == 0 {
-                    break;
-                }
-                got += n;
+    // sending the rest of its handshake.
+    let have = buf.len();
+    buf.resize(HANDSHAKE_LEN, 0);
+    let mut got = 0;
+    let more = tokio::time::timeout(SETTLE, async {
+        while have + got < HANDSHAKE_LEN {
+            let n = conn.read(&mut buf[have + got..]).await?;
+            if n == 0 {
+                break;
             }
-            io::Result::Ok(())
-        })
-        .await;
-        if got == 0 {
-            if let Ok(Err(err)) = more {
-                return Err(err);
-            }
-            buf.truncate(have);
-            return Ok(Sniffed::Plain(buf.split_off(2)));
+            got += n;
         }
+        io::Result::Ok(())
+    })
+    .await;
+    if got == 0 {
+        if let Ok(Err(err)) = more {
+            return Err(err);
+        }
+        buf.truncate(have);
+        return Ok(Sniffed::Plain(buf.split_off(2)));
+    }
     if have + got == HANDSHAKE_LEN && matches_handshake(&buf, cookie) {
         return Ok(Sniffed::Stealth(buf));
     }
@@ -178,9 +178,11 @@ impl KestrelListener {
                             let _ = send_stealth.send(PrefixPipe::new(conn, prefix)).await;
                         }
                         Ok(Sniffed::Plain(first)) if allow_plain => {
-                            let finished =
-                                tokio::time::timeout(SNIFF_TIMEOUT, finish_conntest(&mut conn, first))
-                                    .await;
+                            let finished = tokio::time::timeout(
+                                SNIFF_TIMEOUT,
+                                finish_conntest(&mut conn, first),
+                            )
+                            .await;
                             if matches!(finished, Ok(Ok(()))) {
                                 let _ = send_plain.send(conn).await;
                             }
@@ -447,7 +449,9 @@ mod tests {
     #[test]
     fn prefix_pipe_replays_then_reads_on() {
         geph5_rt::block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0".parse().unwrap())
+                .await
+                .unwrap();
             let mut listener = listener;
             let addr = listener.local_addr().await;
             let client = geph5_rt::spawn(async move {

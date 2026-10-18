@@ -113,7 +113,9 @@ fn exit_pubkey(path: &Path) -> anyhow::Result<String> {
         .with_context(|| format!("cannot read {}", path.display()))?
         .try_into()
         .map_err(|_| anyhow::anyhow!("signing secret must be 32 bytes"))?;
-    Ok(hex::encode(SigningKey::from_bytes(&bytes).verifying_key().as_bytes()))
+    Ok(hex::encode(
+        SigningKey::from_bytes(&bytes).verifying_key().as_bytes(),
+    ))
 }
 
 /// Revokes every key of this device. False if there is no such device.
@@ -155,9 +157,9 @@ fn valid_domain(domain: &str) -> anyhow::Result<String> {
         !d.is_empty()
             && d.len() <= 253
             && d.contains('.')
-            && d
-                .split('.')
-                .all(|l| !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
+            && d.split('.').all(|l| !l.is_empty()
+                && l.len() <= 63
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
         "not a domain name: {domain}"
     );
     Ok(d)
@@ -240,7 +242,10 @@ fn main() -> anyhow::Result<()> {
     let mut file = load(&args.devices)?;
     match &args.cmd {
         Cmd::Add { name, out } => {
-            anyhow::ensure!(valid_name(name), "device names are letters, digits, - and _");
+            anyhow::ensure!(
+                valid_name(name),
+                "device names are letters, digits, - and _"
+            );
             anyhow::ensure!(
                 !file.devices.iter().any(|d| &d.name == name && !d.revoked),
                 "{name} already exists; use rotate to give it a new key"
@@ -299,10 +304,20 @@ fn main() -> anyhow::Result<()> {
             }
             list.sort();
             let tmp = path.with_extension("tmp");
-            fs::write(&tmp, list.iter().map(|d| format!("{d}\n")).collect::<String>())?;
+            fs::write(
+                &tmp,
+                list.iter().map(|d| format!("{d}\n")).collect::<String>(),
+            )?;
             fs::set_permissions(&tmp, fs::Permissions::from_mode(0o640))?;
             fs::rename(&tmp, &path)?;
-            println!("{} {domain}", if matches!(&args.cmd, Cmd::Allow { .. }) { "allowed" } else { "no longer allowed:" });
+            println!(
+                "{} {domain}",
+                if matches!(&args.cmd, Cmd::Allow { .. }) {
+                    "allowed"
+                } else {
+                    "no longer allowed:"
+                }
+            );
         }
         Cmd::Allowed => {
             for d in read_allow(&allow_path(&args.devices)) {
@@ -361,7 +376,14 @@ mod tests {
     fn only_domain_names_can_be_allowed() {
         assert_eq!(valid_domain(" Example.COM. ").unwrap(), "example.com");
         assert!(valid_domain("ads.example.co.uk").is_ok());
-        for bad in ["", "localhost", "a..b", "x.com/evil", "x.com\nevil.com", "-"] {
+        for bad in [
+            "",
+            "localhost",
+            "a..b",
+            "x.com/evil",
+            "x.com\nevil.com",
+            "-",
+        ] {
             assert!(valid_domain(bad).is_err(), "{bad:?} was accepted");
         }
     }

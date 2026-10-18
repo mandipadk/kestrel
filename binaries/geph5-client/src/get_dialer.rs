@@ -52,7 +52,12 @@ pub async fn get_dialer(
             .context("could not resolve destination for direct exit connection")?;
         // Kestrel: a stealth device wraps the link in sosistab3, keyed by the
         // exit's public key, so the connection looks like random bytes.
-        if ctx.init().kestrel_device.as_ref().is_some_and(|d| d.stealth) {
+        if ctx
+            .init()
+            .kestrel_device
+            .as_ref()
+            .is_some_and(|d| d.stealth)
+        {
             let stealth_route = RouteDescriptor::Sosistab3 {
                 cookie: geph5_misc_rpc::kestrel::stealth_cookie(pubkey.as_bytes()),
                 lower: Box::new(RouteDescriptor::Tcp(dest_addr)),

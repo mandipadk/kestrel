@@ -90,7 +90,10 @@ pub fn check_dial(device: &str, dest: &str) -> anyhow::Result<()> {
 /// name, or None to resolve it as usual. Counts the lookup either way.
 pub fn dns_reply(device: &str, query: &[u8]) -> Option<Bytes> {
     let packet = Packet::parse(query).ok()?;
-    let name = packet.questions.first().map(|q| normalize(&q.qname.to_string()))?;
+    let name = packet
+        .questions
+        .first()
+        .map(|q| normalize(&q.qname.to_string()))?;
     if !blocks(device, &name) {
         record(device, None);
         return None;
@@ -238,7 +241,11 @@ fn load_lists(dir: &Path) {
     let allow = std::fs::read_to_string(dir.join(ALLOW_FILE))
         .map(|t| parse_domains(&t))
         .unwrap_or_default();
-    tracing::info!(block = block.len(), allow = allow.len(), "Shield lists loaded");
+    tracing::info!(
+        block = block.len(),
+        allow = allow.len(),
+        "Shield lists loaded"
+    );
     *LISTS.write().unwrap() = Arc::new(Lists { block, allow });
 }
 
@@ -293,7 +300,11 @@ pub async fn shield_loop(dir: PathBuf, devices: PathBuf) -> anyhow::Result<()> {
     load_stats(&dir);
     refresh_enabled(&devices);
     load_lists(&dir);
-    let mut seen = (mtime(&dir.join(LIST_FILE)), mtime(&dir.join(ALLOW_FILE)), mtime(&devices));
+    let mut seen = (
+        mtime(&dir.join(LIST_FILE)),
+        mtime(&dir.join(ALLOW_FILE)),
+        mtime(&devices),
+    );
     let mut last_try = 0u64;
     loop {
         if age_secs(&dir.join(LIST_FILE)) > REFRESH_SECS && now_secs() - last_try > 3600 {
@@ -303,7 +314,11 @@ pub async fn shield_loop(dir: PathBuf, devices: PathBuf) -> anyhow::Result<()> {
                 Err(err) => tracing::warn!(err = debug(err), "cannot refresh the Shield list"),
             }
         }
-        let now = (mtime(&dir.join(LIST_FILE)), mtime(&dir.join(ALLOW_FILE)), mtime(&devices));
+        let now = (
+            mtime(&dir.join(LIST_FILE)),
+            mtime(&dir.join(ALLOW_FILE)),
+            mtime(&devices),
+        );
         if now.0 != seen.0 || now.1 != seen.1 {
             // parsing 200k domains takes a moment; keep it off the async threads
             let dir = dir.clone();
