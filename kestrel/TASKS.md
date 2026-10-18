@@ -38,3 +38,5 @@ Picked (research notes in kestrel/README.md "What Kestrel adds"):
 - [x] Status page: Shield report, network per device, Mac setup by code
 - [x] Deploy via sync.sh --deploy-only; lockdown test; README
 Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
+- [x] OWNER: Mac app refused to install its extension ("does not appear to belong to any extension categories"): extension Info.plist had no CFBundlePackageType; now SYSX (sysextd's "package type not `SYSX`" check, found on the runner). CI gate apps/mac/check-extension.sh checks package type, provider class, Mach service, entitlements, profiles, signatures, on the export and the stapled dmg
+- [x] OWNER: Mac app looked like an iPhone app. Now a menu bar app (LSUIElement): Control Center style panel, setup window only until added, tabbed Settings; system font, native controls, kestrel accent; macOS 14+. Mockup: https://kestrel-mac-mockup.mandip.dev
