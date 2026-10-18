@@ -99,7 +99,10 @@ const PAUSE_SECS: u64 = 3600;
 /// destination is an ordinary one.
 pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
     let host = dest.rsplit_once(':').map(|(h, _)| h).unwrap_or(dest);
-    let what = host.to_ascii_lowercase().strip_suffix(INTERNAL_DOMAIN)?.to_string();
+    let what = host
+        .to_ascii_lowercase()
+        .strip_suffix(INTERNAL_DOMAIN)?
+        .to_string();
     match what.as_str() {
         "status" => {}
         "shield-pause" => shield::pause(device, PAUSE_SECS),

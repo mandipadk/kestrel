@@ -53,11 +53,19 @@ pub async fn proxy_stream(
 }
 
 enum OpenedTunnel {
-    Tcp { dest_tcp: TcpStream },
-    Dns { filter: FilterOptions },
-    Udp { udp_socket: UdpSocket },
+    Tcp {
+        dest_tcp: TcpStream,
+    },
+    Dns {
+        filter: FilterOptions,
+    },
+    Udp {
+        udp_socket: UdpSocket,
+    },
     /// Kestrel: a device asked the exit about itself.
-    Internal { body: Vec<u8> },
+    Internal {
+        body: Vec<u8>,
+    },
 }
 
 async fn open_tunnel(
