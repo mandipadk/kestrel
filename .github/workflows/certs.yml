@@ -1,10 +1,18 @@
-# Lists the team's signing certificates (read-only), to keep an eye on the
-# limit that CI's Xcode signing can run into.
+# Keeps CI's Apple signing in order.
+#   list            the team's signing certificates (read-only)
+#   revoke-ci-dev   revoke development certificates CI runners left behind
+#   make-ci-dev     a development certificate for CI's lasting key, from the
+#                   CSR in apps/ci-dev.csr (the key itself is a repo secret)
 name: certs
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [list, revoke-ci-dev, make-ci-dev]
+        default: list
 jobs:
-  list:
+  certs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -13,9 +21,21 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ACTION: ${{ inputs.action }}
         run: |
-          mkdir -p "$RUNNER_TEMP/keys"
+          mkdir -p "$RUNNER_TEMP/keys" out
           printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/keys/key.p8"
           python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install 'pyjwt[crypto]'
-          ASC_KEY_PATH="$RUNNER_TEMP/keys/key.p8" "$RUNNER_TEMP/venv/bin/python" apps/asc.py certs
+          export ASC_KEY_PATH="$RUNNER_TEMP/keys/key.p8"
+          PY="$RUNNER_TEMP/venv/bin/python"
+          case "$ACTION" in
+            revoke-ci-dev) $PY apps/asc.py revoke-ci-dev ;;
+            make-ci-dev) $PY apps/asc.py dev-cert apps/ci-dev.csr out/ci-dev.cer ;;
+          esac
+          $PY apps/asc.py certs
           rm -rf "$RUNNER_TEMP/keys"
+      - uses: actions/upload-artifact@v4
+        if: inputs.action == 'make-ci-dev'
+        with:
+          name: ci-dev-cert
+          path: out/ci-dev.cer

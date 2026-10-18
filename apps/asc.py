@@ -4,6 +4,9 @@
     asc.py bundle <identifier>                 show a bundle ID's platform and capabilities
     asc.py capability <identifier> <TYPE>      make sure a capability is on (e.g. ACCESS_WIFI_INFORMATION)
     asc.py certs                               list the team's signing certificates
+    asc.py revoke-ci-dev [keep id]             revoke the "Created via API" development certificates
+                                               that CI runners left behind (their keys are gone)
+    asc.py dev-cert <csr file> <out file>      a development certificate for CI's own lasting key
     asc.py devid-profile <identifier> <name> <cert serial hex> <out file>
                                                a fresh Developer ID (Mac, direct) provisioning profile
 
@@ -115,6 +118,29 @@ def main():
         for c in sorted(certs["data"], key=lambda c: c["attributes"]["expirationDate"]):
             a = c["attributes"]
             print(f"{c['id']}  {a['certificateType']:<28} {a['expirationDate'][:10]}  {a['name']}  ({a.get('displayName','')})")
+    elif len(sys.argv) >= 2 and sys.argv[1] == "revoke-ci-dev":
+        keep = sys.argv[2] if len(sys.argv) > 2 else ""
+        status, certs = call("GET", "/certificates?limit=200")
+        if status != 200:
+            sys.exit(f"cannot list certificates ({status}): {certs}")
+        for c in certs["data"]:
+            a = c["attributes"]
+            if a["certificateType"] == "DEVELOPMENT" and a["name"] == "Apple Development: Created via API" and c["id"] != keep:
+                st, _ = call("DELETE", f"/certificates/{c['id']}")
+                print(f"revoked {c['id']} ({st})")
+    elif len(sys.argv) >= 4 and sys.argv[1] == "dev-cert":
+        csr = open(sys.argv[2]).read()
+        csr = "".join(l for l in csr.splitlines() if "-----" not in l)
+        status, made = call("POST", "/certificates", {"data": {
+            "type": "certificates",
+            "attributes": {"certificateType": "DEVELOPMENT", "csrContent": csr},
+        }})
+        if status not in (200, 201):
+            sys.exit(f"could not make the certificate ({status}): {made}")
+        import base64
+        with open(sys.argv[3], "wb") as f:
+            f.write(base64.b64decode(made["data"]["attributes"]["certificateContent"]))
+        print(f"made development certificate {made['data']['id']}")
     elif len(sys.argv) >= 6 and sys.argv[1] == "devid-profile":
         devid_profile(*sys.argv[2:6])
     else:
