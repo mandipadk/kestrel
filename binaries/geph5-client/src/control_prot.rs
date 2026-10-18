@@ -230,7 +230,10 @@ impl ControlProtocol for ControlProtocolImpl {
 
     async fn kestrel_exit(&self, request: String) -> Result<Value, String> {
         use tokio::io::AsyncReadExt;
-        if !matches!(request.as_str(), "status" | "shield-pause" | "shield-resume") {
+        if !matches!(
+            request.as_str(),
+            "status" | "shield-pause" | "shield-resume"
+        ) {
             return Err(format!("unknown request {request}"));
         }
         if self.ctx.init().kestrel_device.is_none() {
