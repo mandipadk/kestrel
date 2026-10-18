@@ -25,6 +25,9 @@ plist() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
 INFO="$EXT/Contents/Info.plist"
 [[ $(plist "$INFO" CFBundlePackageType) == SYSX ]] && ok "package type SYSX" \
   || bad "extension package type is '$(plist "$INFO" CFBundlePackageType)', macOS needs SYSX to give it a category"
+# network extensions also need a usage description in their own Info.plist
+[[ -n $(plist "$INFO" NSSystemExtensionUsageDescription) ]] && ok "extension has NSSystemExtensionUsageDescription" \
+  || bad "extension Info.plist has no NSSystemExtensionUsageDescription; sysextd refuses network extensions without it"
 [[ $(plist "$INFO" CFBundleIdentifier) == "$ID" ]] && ok "bundle id $ID" \
   || bad "extension bundle id is '$(plist "$INFO" CFBundleIdentifier)'"
 BIN="$EXT/Contents/MacOS/$(plist "$INFO" CFBundleExecutable)"

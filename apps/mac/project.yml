@@ -101,6 +101,8 @@ targets:
         # macOS only files a system extension under a category (here, network
         # extensions) when its package type is SYSX
         CFBundlePackageType: SYSX
+        # sysextd refuses a network extension without this, in the extension's own plist
+        NSSystemExtensionUsageDescription: Kestrel's tunnel runs as a network extension that sends this Mac's traffic through your Frankfurt exit.
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
