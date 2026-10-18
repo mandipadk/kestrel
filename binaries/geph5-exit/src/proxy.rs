@@ -38,7 +38,10 @@ pub async fn proxy_stream(
         };
     match opened {
         OpenedTunnel::Tcp { dest_tcp } => proxy_tcp(stream, dest_tcp, ratelimit).await,
-        OpenedTunnel::Dns { filter } => proxy_dns(stream, filter).await,
+        OpenedTunnel::Dns { filter } => {
+            let device = crate::kestrel::device_of(&sess_metadata).map(str::to_string);
+            proxy_dns(stream, filter, device).await
+        }
         OpenedTunnel::Udp { udp_socket } => proxy_udp(stream, udp_socket, ratelimit).await,
     }
 }
@@ -61,6 +64,9 @@ async fn open_tunnel(
     let dest_host = cmd.host().to_string();
     let filter: FilterOptions =
         serde_json::from_value(sess_metadata["filter"].clone()).unwrap_or_default();
+    if let Some(device) = crate::kestrel::device_of(sess_metadata) {
+        crate::kestrel::shield::check_dial(device, &dest_host)?;
+    }
     let dest_addrs = dns_resolve(&dest_host, filter)
         .await
         .context("failed to resolve DNS")?;
@@ -223,7 +229,11 @@ async fn fail_rich_open(
     Err(err)
 }
 
-async fn proxy_dns(stream: picomux::Stream, filter: FilterOptions) -> anyhow::Result<()> {
+async fn proxy_dns(
+    stream: picomux::Stream,
+    filter: FilterOptions,
+    device: Option<String>,
+) -> anyhow::Result<()> {
     let (mut read_stream, write_stream) = tokio::io::split(stream);
     let write_stream = Arc::new(tokio::sync::Mutex::new(write_stream));
     let mut len_buf = [0; 2];
@@ -232,8 +242,14 @@ async fn proxy_dns(stream: picomux::Stream, filter: FilterOptions) -> anyhow::Re
         let mut packet_buf = vec![0; u16::from_le_bytes(len_buf) as usize];
         read_stream.read_exact(&mut packet_buf).await?;
         let write_stream = write_stream.clone();
+        let shielded = device
+            .as_deref()
+            .and_then(|d| crate::kestrel::shield::dns_reply(d, &packet_buf));
         geph5_rt::spawn(async move {
-            let response = raw_dns_respond(packet_buf.into(), filter).await?;
+            let response = match shielded {
+                Some(reply) => reply,
+                None => raw_dns_respond(packet_buf.into(), filter).await?,
+            };
             let mut stream = write_stream.lock().await;
             stream
                 .write_all(&(response.len() as u16).to_le_bytes())

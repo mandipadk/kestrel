@@ -266,3 +266,9 @@ impl<P: Pipe> Pipe for SosistabPipe<P> {
         Some(self.state.shared_secret())
     }
 }
+
+/// Whether these bytes open a client handshake made with this cookie. Lets a
+/// server tell sosistab3 apart from another protocol sharing its port.
+pub fn is_client_handshake(cookie: Cookie, first_bytes: &[u8; 140]) -> bool {
+    handshake::Handshake::decrypt(*first_bytes, cookie, false).is_ok()
+}

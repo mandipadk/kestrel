@@ -54,6 +54,20 @@ enum Cmd {
     },
     /// Print the exit's public key.
     Pubkey,
+    /// Turn Shield (ad, tracker and malware blocking) on or off for a device.
+    Shield { name: String, state: OnOff },
+    /// Never block this domain (or its subdomains) for any device.
+    Allow { domain: String },
+    /// Take a domain off the allow list.
+    Unallow { domain: String },
+    /// Print the allow list.
+    Allowed,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum OnOff {
+    On,
+    Off,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -70,6 +84,12 @@ struct DeviceEntry {
     added: String,
     #[serde(default)]
     revoked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shield: Option<bool>,
+    /// When a rotated key was replaced. Kept so the exit can tell the owner
+    /// if the old key is ever used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replaced: Option<String>,
 }
 
 fn load(path: &Path) -> anyhow::Result<DeviceFile> {
@@ -94,6 +114,53 @@ fn exit_pubkey(path: &Path) -> anyhow::Result<String> {
         .try_into()
         .map_err(|_| anyhow::anyhow!("signing secret must be 32 bytes"))?;
     Ok(hex::encode(SigningKey::from_bytes(&bytes).verifying_key().as_bytes()))
+}
+
+/// Revokes every key of this device. False if there is no such device.
+fn revoke(file: &mut DeviceFile, name: &str) -> bool {
+    let mut found = false;
+    for d in file.devices.iter_mut().filter(|d| d.name == name) {
+        d.revoked = true;
+        found = true;
+    }
+    found
+}
+
+/// Marks every live key of this device as replaced (revoked, but kept).
+fn retire(file: &mut DeviceFile, name: &str) {
+    // keep only the latest replaced key per device, so the file stays small
+    file.devices.retain(|d| !(d.name == name && d.revoked));
+    for d in file.devices.iter_mut().filter(|d| d.name == name) {
+        d.revoked = true;
+        d.replaced = Some(today());
+    }
+}
+
+fn allow_path(devices: &Path) -> PathBuf {
+    devices.with_file_name("shield-allow.txt")
+}
+
+fn read_allow(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
+
+fn valid_domain(domain: &str) -> anyhow::Result<String> {
+    let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    anyhow::ensure!(
+        !d.is_empty()
+            && d.len() <= 253
+            && d.contains('.')
+            && d
+                .split('.')
+                .all(|l| !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
+        "not a domain name: {domain}"
+    );
+    Ok(d)
 }
 
 fn valid_name(name: &str) -> bool {
@@ -145,7 +212,13 @@ fn write_private(path: &Path, contents: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn enroll(args: &Args, file: &mut DeviceFile, name: &str, out: &Path) -> anyhow::Result<()> {
+fn enroll(
+    args: &Args,
+    file: &mut DeviceFile,
+    name: &str,
+    shield: Option<bool>,
+    out: &Path,
+) -> anyhow::Result<()> {
     let device = KestrelDevice::generate(name);
     let config = client_config(args, &device)?;
     file.devices.push(DeviceEntry {
@@ -153,6 +226,8 @@ fn enroll(args: &Args, file: &mut DeviceFile, name: &str, out: &Path) -> anyhow:
         pubkey: device.public_key_hex()?,
         added: today(),
         revoked: false,
+        shield,
+        replaced: None,
     });
     write_private(out, &config)?;
     save(&args.devices, file)?;
@@ -171,23 +246,24 @@ fn main() -> anyhow::Result<()> {
                 "{name} already exists; use rotate to give it a new key"
             );
             file.devices.retain(|d| &d.name != name);
-            enroll(&args, &mut file, name, out)?;
+            enroll(&args, &mut file, name, None, out)?;
         }
         Cmd::Rotate { name, out } => {
             anyhow::ensure!(
                 file.devices.iter().any(|d| &d.name == name),
                 "no device named {name}"
             );
-            file.devices.retain(|d| &d.name != name);
-            enroll(&args, &mut file, name, out)?;
+            let shield = file
+                .devices
+                .iter()
+                .rev()
+                .find(|d| &d.name == name)
+                .and_then(|d| d.shield);
+            retire(&mut file, name);
+            enroll(&args, &mut file, name, shield, out)?;
         }
         Cmd::Revoke { name } => {
-            let dev = file
-                .devices
-                .iter_mut()
-                .find(|d| &d.name == name)
-                .with_context(|| format!("no device named {name}"))?;
-            dev.revoked = true;
+            anyhow::ensure!(revoke(&mut file, name), "no device named {name}");
             save(&args.devices, &file)?;
             println!("revoked {name}");
         }
@@ -202,6 +278,102 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Cmd::Pubkey => println!("{}", exit_pubkey(&args.signing_secret)?),
+        Cmd::Shield { name, state } => {
+            let on = matches!(state, OnOff::On);
+            let mut found = false;
+            for d in file.devices.iter_mut().filter(|d| &d.name == name) {
+                d.shield = (!on).then_some(false);
+                found = true;
+            }
+            anyhow::ensure!(found, "no device named {name}");
+            save(&args.devices, &file)?;
+            println!("Shield {} for {name}", if on { "on" } else { "off" });
+        }
+        Cmd::Allow { domain } | Cmd::Unallow { domain } => {
+            let domain = valid_domain(domain)?;
+            let path = allow_path(&args.devices);
+            let mut list = read_allow(&path);
+            list.retain(|d| d != &domain);
+            if matches!(&args.cmd, Cmd::Allow { .. }) {
+                list.push(domain.clone());
+            }
+            list.sort();
+            let tmp = path.with_extension("tmp");
+            fs::write(&tmp, list.iter().map(|d| format!("{d}\n")).collect::<String>())?;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o640))?;
+            fs::rename(&tmp, &path)?;
+            println!("{} {domain}", if matches!(&args.cmd, Cmd::Allow { .. }) { "allowed" } else { "no longer allowed:" });
+        }
+        Cmd::Allowed => {
+            for d in read_allow(&allow_path(&args.devices)) {
+                println!("{d}");
+            }
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(name: &str, pubkey: &str, revoked: bool) -> DeviceEntry {
+        DeviceEntry {
+            name: name.into(),
+            pubkey: pubkey.into(),
+            added: String::new(),
+            revoked,
+            shield: None,
+            replaced: None,
+        }
+    }
+
+    #[test]
+    fn rotating_keeps_only_the_last_replaced_key() {
+        let mut file = DeviceFile {
+            devices: vec![entry("phone", "k1", false), entry("mac", "m1", false)],
+        };
+        retire(&mut file, "phone");
+        file.devices.push(entry("phone", "k2", false));
+        retire(&mut file, "phone");
+        file.devices.push(entry("phone", "k3", false));
+        let phone: Vec<(&str, bool)> = file
+            .devices
+            .iter()
+            .filter(|d| d.name == "phone")
+            .map(|d| (d.pubkey.as_str(), d.revoked))
+            .collect();
+        assert_eq!(phone, [("k2", true), ("k3", false)]);
+        assert!(file.devices.iter().any(|d| d.name == "mac" && !d.revoked));
+    }
+
+    #[test]
+    fn revoking_reaches_every_key_of_the_device() {
+        let mut file = DeviceFile {
+            devices: vec![entry("phone", "k2", true), entry("phone", "k3", false)],
+        };
+        assert!(revoke(&mut file, "phone"));
+        assert!(file.devices.iter().all(|d| d.revoked));
+        assert!(!revoke(&mut file, "tablet"));
+    }
+
+    #[test]
+    fn only_domain_names_can_be_allowed() {
+        assert_eq!(valid_domain(" Example.COM. ").unwrap(), "example.com");
+        assert!(valid_domain("ads.example.co.uk").is_ok());
+        for bad in ["", "localhost", "a..b", "x.com/evil", "x.com\nevil.com", "-"] {
+            assert!(valid_domain(bad).is_err(), "{bad:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn device_files_from_before_shield_still_load() {
+        let file: DeviceFile = serde_json::from_str(
+            r#"{"devices":[{"name":"iphone","pubkey":"ab","added":"x","revoked":false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(file.devices[0].shield, None);
+        let out = serde_json::to_string(&file).unwrap();
+        assert!(!out.contains("shield") && !out.contains("replaced"));
+    }
 }
