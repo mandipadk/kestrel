@@ -205,6 +205,22 @@ with_link "$WORK/probe.yaml" false > "$WORK/plain.cfg"
 PLAIN=$(start_client plain "$WORK/plain.cfg")
 expect_works "enrolled device connects over the plain link" "$PLAIN"
 
+[[ $(field "$report" 'd["quantum_safe"]') == True ]] && ok "the session keys are quantum-safe (X25519 + ML-KEM-768)" || bad "handshake not quantum-safe: $report"
+
+# with_classical <config> -> a copy that handshakes like an app from before the quantum-safe one
+with_classical() {
+  python3 - "$1" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+cfg["kestrel_device"]["classical_handshake"] = True
+print(yaml.safe_dump(cfg))
+PY
+}
+with_classical "$WORK/stealth.cfg" > "$WORK/classical.cfg"
+CLASSICAL=$(start_client classical "$WORK/classical.cfg")
+expect_works "an app from before the quantum-safe handshake still connects" "$CLASSICAL"
+[[ $(field "$(ask "$CLASSICAL" status)" 'd["quantum_safe"]') == False ]] && ok "the exit tells classical sessions apart" || bad "classical session reported as quantum-safe"
+
 # 7. the in-tunnel report: only this device's own facts
 [[ $(field "$report" 'd["device"]') == lockdown-probe ]] && ok "the device gets its own report through the tunnel" || bad "report: $report"
 if curl -sS --max-time 8 "http://${ENDPOINT%:*}:${ENDPOINT##*:}/" -H "Host: status.kestrel.internal" 2>/dev/null | grep -q device; then
@@ -257,6 +273,21 @@ if [[ "${1:-}" != "--live" ]]; then
   expect_refused "stealth-only exit refuses the plain link" "$P"
   echo=$(printf '\x00\x05hello' | timeout 8 nc -w 6 127.0.0.1 "$SPORT" 2>/dev/null | wc -c)
   [[ "$echo" == 0 ]] && ok "stealth-only exit does not answer a Geph ping" || bad "stealth-only exit echoed $echo bytes"
+
+  # 12. an exit that requires the quantum-safe handshake refuses classical apps
+  QPORT=$(free_port)
+  sed -e "s#^c2e_listen: .*#c2e_listen: 127.0.0.1:$QPORT#" -e "s#^b2e_listen: .*#b2e_listen: 127.0.0.1:$(free_port)#" \
+      -e "s#^kestrel_status: .*#kestrel_status: $WORK/status3.json#" "$WORK/exit.yaml" > "$WORK/pq-exit.yaml"
+  echo "kestrel_require_pq: true" >> "$WORK/pq-exit.yaml"
+  "$BIN/geph5-exit" --config "$WORK/pq-exit.yaml" > "$WORK/pq-exit.log" 2>&1 &
+  PIDS+=($!)
+  sleep 2
+  sed "s#direct: .*/#direct: 127.0.0.1:$QPORT/#" "$WORK/stealth.cfg" > "$WORK/pq-only.cfg"
+  sed "s#direct: .*/#direct: 127.0.0.1:$QPORT/#" "$WORK/classical.cfg" > "$WORK/classical-only.cfg"
+  P=$(start_client pqonly "$WORK/pq-only.cfg")
+  expect_works "a quantum-safe-only exit serves quantum-safe apps" "$P"
+  P=$(start_client classicalonly "$WORK/classical-only.cfg")
+  expect_refused "a quantum-safe-only exit refuses classical apps" "$P"
 fi
 
 echo "lockdown: $PASS passed, $FAIL failed"

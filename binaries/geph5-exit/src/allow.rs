@@ -103,7 +103,11 @@ mod tests {
 
     #[test]
     fn ipv4_mapped_private_addresses_are_blocked() {
-        for ip in ["::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254"] {
+        for ip in [
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+        ] {
             let addr = SocketAddr::new(ip.parse().unwrap(), 80);
             assert!(!proxy_allowed(addr, false, "tcp"), "allowed {addr}");
         }

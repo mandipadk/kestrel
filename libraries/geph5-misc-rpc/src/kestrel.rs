@@ -31,6 +31,10 @@ pub struct KestrelDevice {
     /// drops those. None keeps the engine's per-platform default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vpn_mtu: Option<u16>,
+    /// Tests only: handshake like an app from before the quantum-safe one
+    /// (X25519 alone), to prove exits still serve, or refuse, such apps.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub classical_handshake: bool,
 }
 
 impl KestrelDevice {
@@ -42,6 +46,7 @@ impl KestrelDevice {
             secret: hex::encode(key.to_bytes()),
             stealth: true,
             vpn_mtu: None,
+            classical_handshake: false,
         }
     }
 

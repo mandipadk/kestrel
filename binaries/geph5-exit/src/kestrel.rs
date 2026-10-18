@@ -123,6 +123,7 @@ fn device_report(device: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "device": device,
         "stealth": usage.as_ref().is_some_and(|u| u.stealth.load(Ordering::Relaxed)),
+        "quantum_safe": usage.as_ref().is_some_and(|u| u.quantum_safe.load(Ordering::Relaxed)),
         "asn": asn,
         "country": country,
         "exit": { "country": cfg.country.alpha2(), "city": cfg.city },
@@ -160,8 +161,13 @@ pub fn record_failure(ip: IpAddr) {
 
 /// Checks the device credential in a client hello. Fails closed.
 pub fn authorize(hello: &ClientHello) -> anyhow::Result<Device> {
-    if !matches!(hello.crypt_hello, ClientCryptHello::X25519(_)) {
-        anyhow::bail!("private mode requires end-to-end encryption");
+    match hello.crypt_hello {
+        ClientCryptHello::X25519MlKem768(..) => {}
+        ClientCryptHello::X25519(_) if !CONFIG_FILE.wait().kestrel_require_pq => {}
+        ClientCryptHello::X25519(_) => {
+            anyhow::bail!("this exit requires the quantum-safe handshake")
+        }
+        _ => anyhow::bail!("private mode requires end-to-end encryption"),
     }
     let cred: DeviceCredential =
         stdcode::deserialize(&hello.credentials).context("missing or malformed credential")?;
@@ -284,10 +290,12 @@ async fn network_of(ip: IpAddr) -> (u32, String) {
 }
 
 /// Notes which network a device is connecting from (ASN and country; the
-/// address itself is not kept) and whether it came in hidden.
-pub fn note_connection(device: &Device, ip: Option<IpAddr>, stealth: bool) {
+/// address itself is not kept), whether it came in hidden, and whether its
+/// handshake was quantum-safe.
+pub fn note_connection(device: &Device, ip: Option<IpAddr>, stealth: bool, quantum_safe: bool) {
     let usage = usage_for(&device.name);
     usage.stealth.store(stealth, Ordering::Relaxed);
+    usage.quantum_safe.store(quantum_safe, Ordering::Relaxed);
     let Some(ip) = ip else { return };
     geph5_rt::spawn(async move {
         let network = network_of(ip).await;
@@ -354,6 +362,7 @@ pub struct Usage {
     pub sessions: AtomicU64,
     pub last_seen: AtomicU64,
     pub stealth: AtomicBool,
+    pub quantum_safe: AtomicBool,
     pub network: Mutex<Option<(u32, String)>>,
 }
 
@@ -383,6 +392,9 @@ struct DeviceStatus {
     /// Whether its latest connection came over the stealth link.
     #[serde(default)]
     stealth: bool,
+    /// Whether its latest handshake was quantum-safe (X25519 + ML-KEM-768).
+    #[serde(default)]
+    quantum_safe: bool,
     #[serde(default)]
     asn: u32,
     #[serde(default)]
@@ -423,6 +435,7 @@ pub async fn status_loop() -> anyhow::Result<()> {
             d.last_seen = u.last_seen.load(Ordering::Relaxed).max(base.last_seen);
             if u.sessions.load(Ordering::Relaxed) > 0 || u.last_seen.load(Ordering::Relaxed) > 0 {
                 d.stealth = u.stealth.load(Ordering::Relaxed);
+                d.quantum_safe = u.quantum_safe.load(Ordering::Relaxed);
             }
             if let Some((asn, country)) = u.network.lock().unwrap().clone() {
                 d.asn = asn;
