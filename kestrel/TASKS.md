@@ -46,4 +46,6 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] Sparkle EdDSA key made; private half in gh secret SPARKLE_ED_KEY (owner allowed), backup ~/.config/kestrel/sparkle on Chicago
 - [x] Mac 1.2: Sparkle 2.10.0, signed feed required; Check for Updates in the panel, update settings in General, a quiet "ready" notice for scheduled finds
 - [x] CI: sign dmg + feed, stage mac-b<N>, update test (old copy -> new; tampered feed refused), then mac-latest; keep 5 builds
-- [ ] OWNER: install 1.2 once by hand (1.1 has no updater); after that it updates itself
+- [x] OWNER: install 1.2 once by hand (1.1 has no updater); after that it updates itself
+- [x] OWNER: 1.2 refused by sysextd: "network_extension category require the presence of NSSystemExtensionUsageDescription" (only the app had it). Now in the extension's plist; check-extension.sh checks it
+- [x] CI install test: the notarized app, in /Applications on the runner, asks the real sysextd for the tunnel (build 27: validating_by_category -> activated_waiting_for_user). A control without the key got the owner's exact error (run 39157236592); control removed after
