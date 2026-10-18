@@ -3,20 +3,26 @@
 # (../shared). Shipped outside the App Store: signed with the owner's
 # Developer ID, notarized, as a .dmg. Generate the Xcode project with
 # `xcodegen` (see .github/workflows/apple.yml), which also passes the
-# Developer ID provisioning profiles.
+# Developer ID provisioning profiles. Updates itself with Sparkle from the
+# signed appcast CI publishes on the mac-latest release.
 name: KestrelMac
 options:
   bundleIdPrefix: dev.mandip
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+packages:
+  # pinned: CI builds the same version's sparkle-cli for the update test
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 settings:
   base:
     DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: Developer ID Application
     OTHER_CODE_SIGN_FLAGS: --timestamp
-    MARKETING_VERSION: "1.1"
+    MARKETING_VERSION: "1.2"
     CURRENT_PROJECT_VERSION: ${BUILD_NUMBER}
     SWIFT_VERSION: "5.9"
     ENABLE_HARDENED_RUNTIME: YES
@@ -53,6 +59,14 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: dev.mandip.kestrel.setup
             CFBundleURLSchemes: [kestrel1]
+        # Sparkle: CI signs each .dmg and the feed itself with the EdDSA key
+        # whose public half is here (private half: SPARKLE_ED_KEY)
+        SUFeedURL: https://github.com/mandipadk/kestrel/releases/download/mac-latest/appcast.xml
+        SUPublicEDKey: pHkJv+GprSFixQT95qmbpafGJkG7UkpCQsz3hHVNBNg=
+        SURequireSignedFeed: true
+        SUVerifyUpdateBeforeExtraction: true
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     entitlements:
       path: App/Kestrel.entitlements
       properties:
@@ -65,11 +79,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.mandip.kestrel
         PRODUCT_NAME: Kestrel
+        # Updates.swift uses Sparkle only in the app, not the screenshot tests
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) SPARKLE
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         PROVISIONING_PROFILE_SPECIFIER: ${MAC_APP_PROFILE}
     dependencies:
       - target: KestrelTunnel
+      - package: Sparkle
   KestrelTunnel:
     type: system-extension
     platform: macOS
@@ -123,6 +140,7 @@ targets:
       - path: ../shared/Theme.swift
       - path: App/MacViews.swift
       - path: App/MacSupport.swift
+      - path: App/Updates.swift
       - path: ../shared/Fonts
         buildPhase: resources
     settings:

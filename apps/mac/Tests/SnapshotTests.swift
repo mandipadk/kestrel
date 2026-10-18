@@ -51,6 +51,9 @@ final class SnapshotTests: XCTestCase {
         try render(MenuBarPanel().environmentObject(model(.connected)), "panel-connected")
         try render(MenuBarPanel().environmentObject(model(.off)), "panel-off")
         try render(MenuBarPanel().environmentObject(model(.welcome)), "panel-not-set-up")
+        Updates.shared.applySample(waiting: "1.3", lastCheck: Date().addingTimeInterval(-3 * 3600))
+        try render(MenuBarPanel().environmentObject(model(.connected)), "panel-update-ready")
+        Updates.shared.applySample(waiting: nil, lastCheck: Date().addingTimeInterval(-3 * 3600))
         TunnelExtension.shared.state = .needsApproval
         try render(MenuBarPanel().environmentObject(model(.off)), "panel-approve-extension")
         try render(SetupView().environmentObject(model(.welcome)), "setup")

@@ -43,6 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// setup window; the menu bar label opens it.
     @Published var setupRequests = 0
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // starts Sparkle's daily check
+        _ = Updates.shared
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first(where: { $0.scheme == "kestrel1" }) else { return }
         model.setUp(from: url.absoluteString)
