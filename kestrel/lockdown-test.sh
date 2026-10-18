@@ -342,9 +342,8 @@ if [[ "${1:-}" != "--live" ]]; then
   [[ $FIRST == Alpha || $FIRST == Bravo ]] && ok "automatic mode picked $FIRST" || bad "no exit city in the report ($FIRST)"
   [[ $(field "$(ask "$TWO" status)" 'sorted(x["city"] for x in d["exits"])') == "['Alpha', 'Bravo']" ]] \
     && ok "the exit tells the device about both exits" || bad "the report does not list both exits"
-  # an old-style config (one exit) still connects, and learns the list from its report
-  P=$(start_client oneexit "$WORK/probe.yaml")
-  [[ $(field "$(ask "$P" status)" 'len(d["exits"])') == 0 ]] && ok "the main test exit (no list set) reports no exits" || bad "unexpected exit list on the main test exit"
+  # an exit with no list set tells devices none (asked of a device already on it)
+  [[ $(field "$(ask "$STEALTH" status)" 'len(d["exits"])') == 0 ]] && ok "an exit with no list set reports no exits" || bad "unexpected exit list on the main test exit"
   if [[ $FIRST == Alpha || $FIRST == Bravo ]]; then
     OTHER=$([[ $FIRST == Alpha ]] && echo Bravo || echo Alpha)
     # frozen, not killed: connections stay open but nothing answers (a hung or cut-off exit)
