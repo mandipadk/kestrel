@@ -1,0 +1,2 @@
+While this file exists, CI builds and tests the apps (staging the Mac update and testing it) but releases nothing: no mac-latest, no TestFlight.
+Remove it to release, once the exits the new apps need are live.
