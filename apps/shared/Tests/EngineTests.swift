@@ -27,10 +27,11 @@ final class EngineTests: XCTestCase {
     /// bigger ones, which once let lookups work while no page ever loaded.
     func testAPageLoadsInPacketsThatFitTheTunnel() throws {
         try EngineFixture.start(code: try setupCode())
-        let ip = try EngineFixture.resolve("example.com", id: 0x6c01, timeout: 30)
-        let page = try EngineFixture.fetch(host: "example.com", ip: ip, timeout: 30)
+        let host = "speed.cloudflare.com"
+        let ip = try EngineFixture.resolve(host, id: 0x6c01, timeout: 30)
+        let page = try EngineFixture.fetch(host: host, path: "/__down?bytes=20000", ip: ip, timeout: 30)
         XCTAssertTrue(page.body.hasPrefix("HTTP/1.1 200"), "no page: \(page.body.prefix(200))")
-        XCTAssertGreaterThan(page.body.utf8.count, 1450, "the page should need more than one packet")
+        XCTAssertGreaterThan(page.body.utf8.count, 20_000, "the whole 20 kB should arrive")
         XCTAssertLessThanOrEqual(page.largest, 1450, "the engine sent a \(page.largest)-byte packet into a 1450-byte tunnel")
     }
 
@@ -183,7 +184,7 @@ enum EngineFixture {
     /// Opens a TCP connection through the engine as a browser's packets would,
     /// sends a plain HTTP GET, and collects what comes back until the server
     /// closes. Answers the response and the largest packet the engine sent.
-    static func fetch(host: String, ip: [UInt8], timeout: TimeInterval) throws -> (body: String, largest: Int) {
+    static func fetch(host: String, path: String, ip: [UInt8], timeout: TimeInterval) throws -> (body: String, largest: Int) {
         let me: [UInt8] = [100, 89, 0, 2]
         let mySeq: UInt32 = 0x1000
         func taken() -> [[UInt8]] {
@@ -207,15 +208,25 @@ enum EngineFixture {
             Thread.sleep(forTimeInterval: 0.05)
         }
         guard var next = theirSeq.map({ $0 &+ 1 }) else { throw EngineError("no SYN-ACK from \(host)") }
-        let request = Array("GET / HTTP/1.1\r\nHost: \(host)\r\nConnection: close\r\n\r\n".utf8)
-        send(Packets.tcp(from: me, port: tcpPort, to: ip, port: 80, seq: mySeq &+ 1, ack: next, flags: 0x18, payload: request))
-        // collect in order, acknowledging as we go, until FIN
+        // the handshake's ACK on its own: the engine's stack drops data that rides on it
+        send(Packets.tcp(from: me, port: tcpPort, to: ip, port: 80, seq: mySeq &+ 1, ack: next, flags: 0x10))
+        let request = Array("GET \(path) HTTP/1.1\r\nHost: \(host)\r\nConnection: close\r\n\r\n".utf8)
+        let requestEnd = mySeq &+ 1 &+ UInt32(request.count)
+        // send the request until it is acknowledged (as a kernel retransmits),
+        // then collect the reply in order, acknowledging as we go, until FIN
         var body: [UInt8] = []
         var largest = 0
         var done = false
+        var acked = false
+        var lastSent = Date.distantPast
         while !done, Date() < deadline {
+            if !acked, Date().timeIntervalSince(lastSent) > 1 {
+                send(Packets.tcp(from: me, port: tcpPort, to: ip, port: 80, seq: mySeq &+ 1, ack: next, flags: 0x18, payload: request))
+                lastSent = Date()
+            }
             for p in taken() {
                 largest = max(largest, p.count)
+                if Packets.tcpAck(p) == requestEnd { acked = true }
                 let payload = Packets.tcpPayload(p)
                 if Packets.tcpSeq(p) == next, !payload.isEmpty {
                     body += payload
@@ -226,7 +237,7 @@ enum EngineFixture {
                     done = true
                 }
             }
-            send(Packets.tcp(from: me, port: tcpPort, to: ip, port: 80, seq: mySeq &+ 1 &+ UInt32(request.count), ack: next, flags: 0x10))
+            send(Packets.tcp(from: me, port: tcpPort, to: ip, port: 80, seq: requestEnd, ack: next, flags: 0x10))
             Thread.sleep(forTimeInterval: 0.05)
         }
         guard !body.isEmpty else { throw EngineError("no response from \(host)") }
@@ -296,8 +307,9 @@ enum Packets {
 
     private static func tcpOffset(_ p: [UInt8]) -> Int { Int(p[0] & 0x0f) * 4 }
     static func tcpFlags(_ p: [UInt8]) -> UInt8 { p[tcpOffset(p) + 13] }
-    static func tcpSeq(_ p: [UInt8]) -> UInt32 {
-        let o = tcpOffset(p) + 4
+    static func tcpSeq(_ p: [UInt8]) -> UInt32 { be32(p, at: tcpOffset(p) + 4) }
+    static func tcpAck(_ p: [UInt8]) -> UInt32 { be32(p, at: tcpOffset(p) + 8) }
+    private static func be32(_ p: [UInt8], at o: Int) -> UInt32 {
         let high = UInt32(p[o]) << 24 | UInt32(p[o + 1]) << 16
         let low = UInt32(p[o + 2]) << 8 | UInt32(p[o + 3])
         return high | low
