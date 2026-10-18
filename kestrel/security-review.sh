@@ -76,6 +76,7 @@ if command -v claude >/dev/null; then
   # the prompt goes in on stdin: --allowedTools takes a list and would swallow it
   printf '%s' "You are the weekly security reviewer for Kestrel, a private fork of Geph5 in $REPO (branch kestrel).
 Kestrel is a VPN exit for one owner's devices only. Its guarantees: no broker; the exit refuses to start without a device list; only enrolled, unrevoked device keys get through (ed25519 signature bound to the fresh X25519 hello, 5 minute window); no SMTP; no private, loopback or metadata destinations; per-device rate limits; failed-handshake bans.
+Also: the stealth listener (binaries/geph5-exit/src/kestrel/stealth.rs) must never hand an unauthenticated peer anything (no echo when kestrel_allow_plain is off); the *.kestrel.internal names must only answer an authorized device about itself; Shield must never let a device change another device's settings.
 Review for security bugs:
   1. our changes: $OUT/our-diff.patch
   2. upstream changes from the past week: $OUT/upstream-week.patch
