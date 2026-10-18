@@ -13,7 +13,10 @@
 - [x] OWNER did: Oracle 443 open, repo public, App Store app "Space: Kestrel" (6824089371)
 - [x] Outside-in lockdown test from Chicago: enrolled key exits as Frankfurt; no key / stranger key refused
 - [x] Apple CI green: Mac universal client (on the status page), iPhone build 3 VALID, internal TestFlight group "Owner" (all builds)
-- [ ] OWNER: install TestFlight build on iPhone, add iPhone + Mac from the Kestrel page; then confirm both show "Connected now"
+- [x] QR bug: page regex matched allow_direct; now YAML-parsed and validated (30/30 round-trip)
+- [x] MacBook connected (exit log: device=macbook)
+- [x] iPhone tunnel died at start: extension was linked with -lgeph5_client, which picks the cdylib; now links the .a by path. CI checks otool -L (system libs only) and runs EngineTests on the Simulator: DNS packets round-trip through the exit (device ci-ios). Build 7 in TestFlight.
+- [ ] OWNER: install build 7, tap Connect; confirm "iphone" shows Connected now on the page
 - [ ] Server IP still appears in kestrelctl default + security-review default (and history); move to /var/lib/kestrel/endpoint when allowed
 - [ ] Remaining advisories needing manual bumps: sqlx 0.7 -> 0.8 (major), rsa (no fix, Marvin), rustls 0.21 line via an old dep
 - [ ] Firewall: exempt lo from the per-source hashlimit (next root change)
