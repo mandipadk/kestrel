@@ -86,12 +86,21 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] Frankfurt on a05a98a (44/44 local, 20/20 live, page path ok); Chicago follows at its 05:40 run
 - [ ] Owner's call: kestrel_allow_plain: false once every device is on the stealth link (the device "macbook" was last seen on the plain link)
 
-## Round 6 (proposed 2026-10-19, waiting for the owner): plan in kestrel/PLAN.md
+## Round 6 (2026-10-19, owner said go): plan in kestrel/PLAN.md
 Found on the live exits: Chicago has never carried an owner device (learnt exit lists wait for the tunnel to go off); the round-1 Mac command-line client ("macbook", plain, classical, no Shield) still runs and likely holds the Mac's proxies; iPhone not seen since before 1.2.
-- [ ] Mac 1.4: replace the old command-line client from the panel (agent, files, proxies); CI test with the old client installed first
-- [ ] Apps: a learnt exit list reaches the running engine; engine test + control
-- [ ] Failover ~3 s (session keepalive); live-exits-test 30x under 5 s
-- [ ] Exit watch: each exit checks the other every 5 min; uptime on the page; reports to this work
-- [ ] Shield "Just blocked" with Allow from the device (exit ring buffer, apps, page)
-- [ ] Disguised link: WebSocket over HTTPS via Cloudflare to Chicago's exit (needs OWNER OK for a public address); hostile-network netns test + control
+- [x] apps/HOLD in place (CI builds and tests, releases nothing)
+- [x] Exit: Shield just-blocked (last 50 per device, memory only) and allow/unallow by request (this device / all devices); unit tests
+- [x] Exit bug found by the new tests: Shield summary panicked if the clock stepped back an hour (subtract overflow); fixed + test
+- [x] Engine: learns the exit list from the report (append-only, indexes stay), devices without a list restart on it, automatic re-race moves to the faster exit; 3 s ping timeout on Kestrel sessions; head start 1.5 s; unit tests
+- [x] Engine: disguised link (stealth link in WebSocket over HTTPS, rustls + webpki roots, 20 s WS pings), auto joins after 4 s (at once if it worked last), link: direct|disguised; exits carry `disguise`; report says link
+- [x] Edge shim (kestrel/edge, ~/sites/kestrel-edge on both servers): secret path (~/.config/kestrel/edge-path), 404 otherwise, only to 127.0.0.1:443, per-visitor limits by CF-Connecting-IP
+- [x] Allow lists merge both ways between exits (allow-sync.py, three-way); exits reload device allows
+- [x] Exit watch (watch.sh + kestrel-watch.timer), state.py summary, page uptime strip; exit notes disguised devices
+- [x] Apps: Mac removes the old client (panel notice + --remove-old-client for CI); Just Blocked (Mac window, iPhone sheet); Always disguise setting; Mac 1.4 / iPhone 1.3; CI old-client test
+- [ ] Unit tests green on Frankfurt; local lockdown; local disguise test over loopback + control with the old engine
+- [ ] OWNER (root, sent): firewall loopback exemption + watch timer on both exits
+- [ ] BLOCKED: public launch of kestrel-edge / kestrel-edge-fra (my session's safety check refuses public surfaces, even via power run)
+- [ ] Deploy Frankfurt (sync.sh --deploy-only), Chicago follow --force; page relaunch
+- [ ] Live: lockdown both, vpn-path, live-exits-test 30x (failover < 5 s target), conn-rate-test
+- [ ] Apple CI on hold: green, screenshots reviewed; then release (remove HOLD)
 - [ ] A day with no plain/classical device: revoke "macbook", kestrel_allow_plain: false, kestrel_require_pq: true
