@@ -198,7 +198,16 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
         // a silent or slow peer gets no more than a few seconds
         match tokio::time::timeout(Duration::from_secs(10), read_prepend_length(&mut client)).await
         {
-            Ok(Ok(raw)) => stdcode::deserialize(&raw)?,
+            Ok(Ok(raw)) => match stdcode::deserialize(&raw) {
+                Ok(hello) => hello,
+                // junk in a hello counts against the address like a bad key
+                Err(err) => {
+                    if let Some(ip) = remote_ip {
+                        crate::kestrel::record_failure(ip);
+                    }
+                    return Err(err.into());
+                }
+            },
             // a device dropping a connection it no longer needs (see kestrel::hung_up)
             Ok(Err(err)) if crate::kestrel::hung_up(&err) => {
                 anyhow::bail!("closed before its hello")
