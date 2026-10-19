@@ -199,6 +199,10 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
         match tokio::time::timeout(Duration::from_secs(10), read_prepend_length(&mut client)).await
         {
             Ok(Ok(raw)) => stdcode::deserialize(&raw)?,
+            // a device dropping a connection it no longer needs (see kestrel::hung_up)
+            Ok(Err(err)) if crate::kestrel::hung_up(&err) => {
+                anyhow::bail!("closed before its hello")
+            }
             _ => {
                 if let Some(ip) = remote_ip {
                     crate::kestrel::record_failure(ip);

@@ -98,6 +98,8 @@ print(yaml.safe_dump(cfg))
 PY
 else
   BIN=${1:?usage: lockdown-test.sh <bin-dir> | --live}
+  # throwaway exits are not in this host's real exit list; kestrelctl must not read it
+  export KESTREL_EXITS=$WORK/no-exit-list.json
   CLIENT=$BIN/geph5-client
   CTL=$BIN/kestrelctl
   DEVICES=$WORK/devices.json
@@ -376,6 +378,60 @@ PY
     expect_works "a device pinned to $OTHER uses it" "$P"
     [[ $(field "$(ask "$P" status)" 'd["exit"]["city"]') == "$OTHER" ]] && ok "the pin is honoured" || bad "the pinned device is not on $OTHER"
   fi
+fi
+
+# 14. blocking: a stranger's address is blocked after 5 failures, but a device that
+# hangs up half-made connections (racing both exits, changing networks) is not.
+# Over the host's own non-loopback address: loopback is never blocked, which is how
+# the earlier tests missed this.
+HOSTIP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
+if [[ "${1:-}" != "--live" && -n $HOSTIP ]]; then
+  declare -A BPORT
+  for X in BanA BanB; do
+    BPORT[$X]=$(free_port)
+    sed -e "s#^c2e_listen: .*#c2e_listen: $HOSTIP:${BPORT[$X]}#" -e "s#^b2e_listen: .*#b2e_listen: 127.0.0.1:$(free_port)#" \
+        -e "s#^kestrel_status: .*#kestrel_status: $WORK/status-$X.json#" "$WORK/exit.yaml" > "$WORK/exit-$X.yaml"
+    "$BIN/geph5-exit" --config "$WORK/exit-$X.yaml" > "$WORK/exit-$X.log" 2>&1 &
+    PIDS+=($!)
+  done
+  sleep 2
+  at() { # at <config> <exit> -> the config, aimed at that exit over $HOSTIP
+    python3 - "$1" "$HOSTIP:${BPORT[$2]}" <<'PY'
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+pubkey = cfg["exit_constraint"]["direct"].split("/")[1]
+cfg["exit_constraint"] = {"direct": f"{sys.argv[2]}/{pubkey}"}
+print(yaml.safe_dump(cfg))
+PY
+  }
+  hang_up() { # hang_up <exit> <n>: n connections closed at once, before a byte is sent
+    python3 -c 'import socket,sys
+for _ in range(int(sys.argv[3])): socket.create_connection((sys.argv[1], int(sys.argv[2]))).close()' "$HOSTIP" "${BPORT[$1]}" "$2"
+  }
+  blocked() { grep -q "too many failed handshakes" "$WORK/exit-$1.log"; }
+
+  # BanA: hang-ups first, then a device, then a stranger on the device's address
+  hang_up BanA 12; sleep 1
+  ! blocked BanA && ok "12 connections that hang up at once do not block the address" || bad "hang-ups blocked the address"
+  at "$WORK/probe.yaml" BanA > "$WORK/banA-dev.cfg"
+  D=$(start_client banA-dev "$WORK/banA-dev.cfg")
+  expect_works "a device then connects from that address" "$D"
+  at "$WORK/stranger.cfg" BanA > "$WORK/banA-stranger.cfg"
+  S=$(start_client banA-stranger "$WORK/banA-stranger.cfg")
+  expect_refused "a stranger on that address is refused" "$S"
+  sleep 5
+  ! blocked BanA && ok "a stranger does not get a device's own address blocked" || bad "a device's own address was blocked"
+  D2=$(start_client banA-dev2 "$WORK/banA-dev.cfg")
+  expect_works "the device's address still gets through after the stranger" "$D2"
+
+  # BanB: nothing trusted yet; a stranger gets the address blocked, and then nothing gets through
+  at "$WORK/stranger.cfg" BanB > "$WORK/banB-stranger.cfg"
+  S=$(start_client banB-stranger "$WORK/banB-stranger.cfg")
+  for _ in $(seq 1 20); do blocked BanB && break; sleep 1; done
+  blocked BanB && ok "a stranger's address is blocked after 5 failures" || bad "a stranger's address was never blocked"
+  at "$WORK/probe.yaml" BanB > "$WORK/banB-dev.cfg"
+  D=$(start_client banB-dev "$WORK/banB-dev.cfg")
+  expect_refused "a blocked address gets nothing, even with a device key" "$D"
 fi
 
 echo "lockdown: $PASS passed, $FAIL failed"
