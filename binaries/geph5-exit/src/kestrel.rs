@@ -354,6 +354,10 @@ pub fn note_connection(device: &Device, ip: Option<IpAddr>, stealth: bool, quant
     let usage = usage_for(&device.name);
     usage.stealth.store(stealth, Ordering::Relaxed);
     usage.quantum_safe.store(quantum_safe, Ordering::Relaxed);
+    // devices only come from this host through the disguised address's edge
+    usage
+        .disguised
+        .store(ip.is_some_and(|ip| ip.is_loopback()), Ordering::Relaxed);
     let Some(ip) = ip else { return };
     TRUSTED.insert(ip, ());
     FAILURES.invalidate(&ip);
@@ -423,6 +427,7 @@ pub struct Usage {
     pub last_seen: AtomicU64,
     pub stealth: AtomicBool,
     pub quantum_safe: AtomicBool,
+    pub disguised: AtomicBool,
     pub network: Mutex<Option<(u32, String)>>,
 }
 
@@ -455,6 +460,9 @@ struct DeviceStatus {
     /// Whether its latest handshake was quantum-safe (X25519 + ML-KEM-768).
     #[serde(default)]
     quantum_safe: bool,
+    /// Whether it came through the disguised address.
+    #[serde(default)]
+    disguised: bool,
     #[serde(default)]
     asn: u32,
     #[serde(default)]
@@ -496,6 +504,7 @@ pub async fn status_loop() -> anyhow::Result<()> {
             if u.sessions.load(Ordering::Relaxed) > 0 || u.last_seen.load(Ordering::Relaxed) > 0 {
                 d.stealth = u.stealth.load(Ordering::Relaxed);
                 d.quantum_safe = u.quantum_safe.load(Ordering::Relaxed);
+                d.disguised = u.disguised.load(Ordering::Relaxed);
             }
             if let Some((asn, country)) = u.network.lock().unwrap().clone() {
                 d.asn = asn;

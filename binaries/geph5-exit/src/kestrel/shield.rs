@@ -547,6 +547,8 @@ pub async fn shield_loop(dir: PathBuf, devices: PathBuf) -> anyhow::Result<()> {
         mtime(&dir.join(ALLOW_FILE)),
         mtime(&devices),
     );
+    // the other exit merges its devices' allows in (allow-sync.py)
+    let mut seen_device_allow = mtime(&dir.join(DEVICE_ALLOW_FILE));
     let mut last_try = 0u64;
     loop {
         if age_secs(&dir.join(LIST_FILE)) > REFRESH_SECS && now_secs() - last_try > 3600 {
@@ -568,6 +570,11 @@ pub async fn shield_loop(dir: PathBuf, devices: PathBuf) -> anyhow::Result<()> {
         }
         if now.2 != seen.2 {
             refresh_enabled(&devices);
+        }
+        let device_allow = mtime(&dir.join(DEVICE_ALLOW_FILE));
+        if device_allow != seen_device_allow {
+            load_device_allow(&dir);
+            seen_device_allow = device_allow;
         }
         seen = now;
         save_stats(&dir);
