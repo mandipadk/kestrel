@@ -23,6 +23,7 @@ on:
       - binaries/geph5-client/**
       - libraries/geph5-misc-rpc/**
       - libraries/sillad-sosistab3/**
+      - Cargo.lock
       - .github/workflows/apple.yml
 
 concurrency:
