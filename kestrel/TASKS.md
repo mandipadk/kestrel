@@ -73,3 +73,11 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] Released: apps/HOLD removed; CI run 39 (Mac 1.3 build 39 on mac-latest, signed appcast, update test 1.2 -> 1.3; iPhone 1.2 uploaded to TestFlight). Frankfurt's 04:45 sync rebased on upstream 02b7831 and deployed 1b99bda (all gates passed)
 - [ ] Failover is 11-14 s, not the planned 10 s (the open-response timeout is 10 s); a faster dead-session check would cut it
 - [ ] kestrel_require_pq once every device reports quantum-safe
+
+## Upkeep (2026-10-19): unanswered reports, advisories
+- [x] OWNER: automation reports now go to the agent on want fec5092f (notify.sh: ask-me --work), not the owner's phone; tested end to end
+- [x] The two "update stopped" reports (2026-10-18 20:09, 22:56) were runs started by hand: cargo not on PATH (sync.sh now sets it), then the loopback firewall rule blocking the exit's replies (fixed in 1357e61). Every update since passed all gates
+- [x] rustls 0.23.40 -> 0.23.46 (4 advisories); exit deployed 1169fbe, apps in CI run 40 (Mac 1.3 build 40); apple.yml now also rebuilds on Cargo.lock
+- [x] Security review raises only advisories not in kestrel/advisories-accepted.txt (each accepted one has its reason; an entry covers one crate version line). Remaining 8 RustSec + OSV notices accepted: rsa (no fix; broker login only), rustls 0.21 / webpki 0.101 (upstream broker only), sqlx 0.7 (SQLite only here; 0.8 is upstream's upgrade), unmaintained crates
+- [x] The review's Claude summary never saved (it could edit, not write review.md); fixed. Its own to-dos done: rustls bump; IPv6-written loopback ([::ffff:127.0.0.1], [::1]) in the lockdown test (an exit without its allow.rs fix fails the check); "updated sqlx" no longer claimed when nothing moved
+- [x] geph5-client unit tests had stopped compiling (Config gained kestrel_device); fixed (30 pass) and now part of the nightly gate
