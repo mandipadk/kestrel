@@ -21,6 +21,13 @@ struct KestrelMacApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        Window("Just Blocked", id: JustBlockedView.windowID) {
+            JustBlockedView()
+                .environmentObject(app.model)
+        }
+        .defaultSize(width: 460, height: 520)
+        .defaultPosition(.center)
+
         Window("Set Up Kestrel", id: SetupView.windowID) {
             SetupView()
                 .environmentObject(app.model)
@@ -45,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if CommandLine.arguments.contains("--check-extension") { return checkExtensionAndExit() }
+        if CommandLine.arguments.contains("--remove-old-client") { return removeOldClientAndExit() }
         // starts Sparkle's daily check
         _ = Updates.shared
     }
@@ -60,6 +68,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             case .needsApproval, .ready: exit(0)
             default: exit(1)
             }
+        }
+    }
+
+    /// CI: finds the old command-line client and removes it as the panel's
+    /// button does. Exits 0 only if it found it and nothing of it is left.
+    private func removeOldClientAndExit() {
+        Task {
+            let old = OldClient.shared
+            old.refresh()
+            let found = old.present
+            let proxies = OldClient.oldProxies().map { "\($0.service) \($0.off)" }
+            FileHandle.standardError.write(Data("old client found: \(found), proxies: \(proxies)\n".utf8))
+            let gone = found ? await old.remove() : false
+            FileHandle.standardError.write(Data("removed: \(gone) \(old.problem ?? "")\n".utf8))
+            exit(found && gone ? 0 : 1)
         }
     }
 

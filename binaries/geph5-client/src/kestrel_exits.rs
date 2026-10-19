@@ -112,16 +112,22 @@ fn well_formed(e: &KestrelExit) -> bool {
         && e.city.len() <= 40
 }
 
-/// The configured or learnt list with `told`'s new exits appended (by key), or
-/// None if `told` adds nothing.
+/// The configured or learnt list with `told`'s new exits appended (by key) and
+/// known exits' disguised addresses brought up to date, or None if `told`
+/// changes nothing.
 fn merged(current: &[KestrelExit], told: &[KestrelExit]) -> Option<Vec<KestrelExit>> {
     let mut next = current.to_vec();
     for e in told.iter().filter(|e| well_formed(e)) {
-        if !next.iter().any(|c| c.pubkey.eq_ignore_ascii_case(&e.pubkey)) {
-            next.push(e.clone());
+        match next.iter_mut().find(|c| c.pubkey.eq_ignore_ascii_case(&e.pubkey)) {
+            Some(known) => {
+                if e.disguise.is_some() {
+                    known.disguise.clone_from(&e.disguise);
+                }
+            }
+            None => next.push(e.clone()),
         }
     }
-    (next.len() > current.len()).then_some(next)
+    (next != current).then_some(next)
 }
 
 /// Takes the exit list an exit reported (it came through our own tunnel, so it
@@ -138,6 +144,7 @@ pub fn learn(ctx: &AnyCtx<Config>, told: &serde_json::Value) {
     let Some(next) = merged(&current, &told) else {
         return;
     };
+    let added = next.len() > current.len();
     tracing::info!(
         exits = debug(next.iter().map(|e| e.city.as_str()).collect::<Vec<_>>()),
         "learnt the owner's exits"
@@ -146,7 +153,7 @@ pub fn learn(ctx: &AnyCtx<Config>, told: &serde_json::Value) {
     if current.is_empty() {
         // sessions from before had no exit list: start over on it
         crate::session::close_sessions_without_exit(ctx);
-    } else {
+    } else if added {
         let ctx = ctx.clone();
         tokio::spawn(async move {
             if let Err(err) = reconsider(&ctx).await {
@@ -337,7 +344,12 @@ mod tests {
         // nothing new: nothing to do
         assert!(merged(&next, &[chicago.clone()]).is_none());
         // a device with no list takes the whole list
-        assert_eq!(merged(&[], &[chicago.clone()]).unwrap(), [chicago]);
+        assert_eq!(merged(&[], &[chicago.clone()]).unwrap(), [chicago.clone()]);
+        // a known exit that gains a disguised address gets it, in place
+        let mut disguised = chicago.clone();
+        disguised.disguise = Some("wss://edge.example.dev/k/abc".into());
+        let next2 = merged(&next, &[disguised.clone()]).unwrap();
+        assert_eq!(next2, [frankfurt, disguised]);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+{
+  "name": "kestrel-edge",
+  "private": true,
+  "description": "Kestrel's disguised address: a WebSocket on the owner's Cloudflare zone that hands each device's bytes to this server's exit",
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "ws": "8.18.3" }
+}

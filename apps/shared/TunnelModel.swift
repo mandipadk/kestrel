@@ -18,17 +18,29 @@ struct ExitReport: Equatable {
         /// Blocked lookups per hour, oldest first, ending with this hour.
         var hourly: [Int]
         var top: [(domain: String, count: Int)]
+        /// Just blocked for this device, newest first.
+        var recent: [Blocked] = []
+        /// Domains this device let through, and those let through on every device.
+        var allowed: [String] = []
+        var allowedEverywhere: [String] = []
 
         static func == (a: Shield, b: Shield) -> Bool {
             a.on == b.on && a.pausedUntil == b.pausedUntil && a.lookups24h == b.lookups24h
                 && a.blocked24h == b.blocked24h && a.blockedTotal == b.blockedTotal && a.hourly == b.hourly
                 && a.top.map(\.domain) == b.top.map(\.domain) && a.top.map(\.count) == b.top.map(\.count)
+                && a.recent == b.recent && a.allowed == b.allowed && a.allowedEverywhere == b.allowedEverywhere
         }
 
         var paused: Bool { (pausedUntil ?? .distantPast) > Date() }
         var active: Bool { on && !paused }
         /// Share of lookups that were trackers, 0...1.
         var share: Double { lookups24h == 0 ? 0 : Double(blocked24h) / Double(lookups24h) }
+    }
+
+    struct Blocked: Equatable, Hashable {
+        var domain: String
+        var count: Int
+        var last: Date
     }
 
     var device: String
@@ -40,9 +52,12 @@ struct ExitReport: Equatable {
     var shield: Shield
     /// All of the owner's exits, as the exit tells it.
     var exits: [KestrelExit]
+    /// How this device reached the exit: "direct" or "disguised" (the engine says).
+    var link: String
 
     init(device: String, stealth: Bool, quantumSafe: Bool = true, exitCity: String, exitCountry: String,
-         shield: Shield, exits: [KestrelExit] = []) {
+         shield: Shield, exits: [KestrelExit] = [], link: String = "direct") {
+        self.link = link
         self.device = device
         self.stealth = stealth
         self.quantumSafe = quantumSafe
@@ -64,8 +79,10 @@ struct ExitReport: Equatable {
         exits = (json["exits"] as? [[String: Any]] ?? []).compactMap { e in
             guard let city = e["city"] as? String, let endpoint = e["endpoint"] as? String,
                   let key = e["pubkey"] as? String, key.count == 64, key.allSatisfy(\.isHexDigit) else { return nil }
-            return KestrelExit(c: city, e: endpoint, k: key)
+            let disguise = (e["disguise"] as? String).flatMap { $0.hasPrefix("wss://") ? $0 : nil }
+            return KestrelExit(c: city, e: endpoint, k: key, d: disguise)
         }
+        link = json["link"] as? String ?? "direct"
         exitCity = exit["city"] as? String ?? ""
         exitCountry = exit["country"] as? String ?? ""
         shield = Shield(
@@ -78,7 +95,13 @@ struct ExitReport: Equatable {
             top: (s["top"] as? [[Any]] ?? []).compactMap { pair in
                 guard pair.count == 2, let d = pair[0] as? String else { return nil }
                 return (d, int(pair[1]))
-            }
+            },
+            recent: (s["recent"] as? [[String: Any]] ?? []).compactMap { r in
+                guard let d = r["domain"] as? String else { return nil }
+                return Blocked(domain: d, count: int(r["count"]), last: Date(timeIntervalSince1970: TimeInterval(int(r["last"]))))
+            },
+            allowed: s["allowed"] as? [String] ?? [],
+            allowedEverywhere: s["allowed_everywhere"] as? [String] ?? []
         )
     }
 }
@@ -98,6 +121,8 @@ final class TunnelModel: ObservableObject {
     /// learned from an exit's report), and the one to stay on (nil: automatic).
     @Published var exits: [KestrelExit] = []
     @Published var exitChoice: String?
+    /// nil: automatic (direct, disguised when direct doesn't answer); "disguised": always.
+    @Published var link: String?
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
@@ -111,6 +136,7 @@ final class TunnelModel: ObservableObject {
         trustedNetworks = defaults.stringArray(forKey: "trustedNetworks") ?? []
         exits = (defaults.data(forKey: "exits")).flatMap { try? JSONDecoder().decode([KestrelExit].self, from: $0) } ?? []
         exitChoice = defaults.string(forKey: "exitChoice")
+        link = defaults.string(forKey: "link")
         let managers = (try? await NETunnelProviderManager.loadAllFromPreferences()) ?? []
         manager = managers.first
         if let proto = manager?.protocolConfiguration as? NETunnelProviderProtocol,
@@ -205,6 +231,16 @@ final class TunnelModel: ObservableObject {
         await askExit(paused ? "shield-pause" : "shield-resume")
     }
 
+    /// Lets a domain through Shield for this device, or for all of them.
+    func allow(_ domain: String, everywhere: Bool = false) async {
+        await askExit("\(everywhere ? "shield-allow-all" : "shield-allow").\(domain)")
+    }
+
+    /// Blocks a domain again (undoes either kind of allow).
+    func unallow(_ domain: String) async {
+        await askExit("shield-unallow.\(domain)")
+    }
+
     private func askExit(_ request: String) async {
         guard let reply = await message("exit:\(request)") else { return }
         if let json = reply["exit"] as? [String: Any], let report = ExitReport(json: json) {
@@ -217,7 +253,7 @@ final class TunnelModel: ObservableObject {
 
     /// The engine config for this device with its exits and choice.
     func config(for key: DeviceKey) -> String {
-        key.clientConfig(exits: exits, choice: exitChoice)
+        key.clientConfig(exits: exits, choice: exitChoice, link: link)
     }
 
     /// An exit told us the owner's exits (it came through the tunnel, so it is
@@ -246,11 +282,27 @@ final class TunnelModel: ObservableObject {
 
     /// Stays on one exit (a city), or nil for automatic; reconnects to apply it.
     func setExitChoice(_ city: String?) async {
-        guard city != exitChoice, let key = device,
-              let raw = (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["key"] as? String
-        else { return }
+        guard city != exitChoice else { return }
         exitChoice = city
         defaults.set(city, forKey: "exitChoice")
+        await reinstallAndReconnect()
+    }
+
+    /// Always disguised ("disguised") or automatic (nil); reconnects to apply it.
+    func setLink(_ mode: String?) async {
+        guard mode != link else { return }
+        link = mode
+        defaults.set(mode, forKey: "link")
+        await reinstallAndReconnect()
+    }
+
+    /// Whether any exit has a disguised address (the setting means nothing otherwise).
+    var canDisguise: Bool { exits.contains { $0.d != nil } }
+
+    private func reinstallAndReconnect() async {
+        guard let key = device,
+              let raw = (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["key"] as? String
+        else { return }
         let wasOn = isOn || isBusy
         await install(key, raw: raw)
         if wasOn, let m = manager {
@@ -403,17 +455,6 @@ final class TunnelModel: ObservableObject {
         return CWWiFiClient.shared().interface()?.ssid()
         #endif
     }
-
-    #if os(macOS)
-    /// True while the old `kestrel` command still points this Mac's proxies
-    /// at its local client. Both at once would send traffic through twice.
-    var legacyProxyOn: Bool {
-        guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else { return false }
-        let socks = settings["SOCKSEnable"] as? Int == 1 && settings["SOCKSPort"] as? Int == 9909
-        let web = settings["HTTPSEnable"] as? Int == 1 && settings["HTTPSPort"] as? Int == 9910
-        return socks || web
-    }
-    #endif
 
     enum SampleState: String { case welcome, off, connected }
 

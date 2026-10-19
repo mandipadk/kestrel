@@ -120,7 +120,7 @@ extension TunnelModel {
     var linkDescription: String {
         guard isOn else { return "Hidden when connected" }
         guard let report else { return "checking…" }
-        let wire = report.stealth ? "Hidden" : "Plain"
+        let wire = report.link == "disguised" ? "Disguised" : report.stealth ? "Hidden" : "Plain"
         return report.quantumSafe ? "\(wire), quantum-safe" : wire
     }
 
