@@ -9,6 +9,8 @@
 # the lockdown test; if the live lockdown test then fails, the previous good
 # release comes back. Each run writes a report for the status page.
 set -uo pipefail
+# cargo lives in ~/.cargo/bin: a run by hand without it on PATH must not look like a failed build
+export PATH="$HOME/.cargo/bin:$PATH"
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 K=$REPO/kestrel
@@ -80,6 +82,9 @@ build_and_test() {
     || { tail -30 "$REPORTS/build-$STAMP.log"; return 1; }
   step "unit tests"
   cargo test --release -j2 -p geph5-misc-rpc -p geph5-exit -p kestrelctl > "$REPORTS/test-$STAMP.log" 2>&1 \
+    || { grep -E "FAILED|panicked|error" "$REPORTS/test-$STAMP.log" | head -30; return 1; }
+  # the apps' engine too (its library tests once stopped compiling unnoticed)
+  cargo test --release -j2 -p geph5-client --lib >> "$REPORTS/test-$STAMP.log" 2>&1 \
     || { grep -E "FAILED|panicked|error" "$REPORTS/test-$STAMP.log" | head -30; return 1; }
   grep "test result" "$REPORTS/test-$STAMP.log"
   step "lockdown test (throwaway exit)"

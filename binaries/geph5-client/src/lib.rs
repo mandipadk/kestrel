@@ -179,6 +179,7 @@ mod tests {
             socks5_listen: Some(SOCKS5_ADDR),
             http_proxy_listen: Some(HTTP_ADDR),
             control_listen: Some(CONTROL_ADDR),
+            kestrel_device: None,
             control_listen_unix: None,
             control_listen_pipe: None,
             exit_constraint: super::ExitConstraint::Auto,

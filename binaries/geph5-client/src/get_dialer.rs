@@ -326,6 +326,7 @@ mod tests {
             socks5_listen: None,
             http_proxy_listen: None,
             pac_listen: None,
+            kestrel_device: None,
             control_listen: None,
             control_listen_unix: None,
             control_listen_pipe: None,
