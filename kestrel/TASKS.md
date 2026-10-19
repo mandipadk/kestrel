@@ -17,7 +17,7 @@
 - [x] MacBook connected (exit log: device=macbook)
 - [x] iPhone tunnel died at start: extension was linked with -lgeph5_client, which picks the cdylib; now links the .a by path. CI checks otool -L (system libs only) and runs EngineTests on the Simulator: DNS packets round-trip through the exit (device ci-ios). Build 7 in TestFlight.
 - [x] iPhone connected after build 7 (exit counted 20 MB from "iphone")
-- [ ] Server IP still appears in kestrelctl default + security-review default (and history); move to /var/lib/kestrel/endpoint when allowed
+- [x] Server IP in kestrelctl/security-review defaults: moot since round 5 (both exits' addresses are published on purpose in kestrel/exits.json for devices and CI)
 - [ ] Remaining advisories needing manual bumps: sqlx 0.7 -> 0.8 (major), rsa (no fix, Marvin), rustls 0.21 line via an old dep
 - [ ] Firewall: exempt lo from the per-source hashlimit (next root change)
 - [x] Mac: a signed/notarized installer would remove the one Terminal step
