@@ -46,7 +46,7 @@ if stranger:
     dev["secret"] = secrets.token_hex(32)
 cfg["exit_constraint"] = {"direct": f'{target["endpoint"]}/{target["pubkey"]}'}
 cfg["socks5_listen"] = f"127.0.0.1:{port}"
-for k in ("http_proxy_listen", "control_listen", "vpn"):
+for k in ("http_proxy_listen", "control_listen", "pac_listen", "vpn"):
     cfg.pop(k, None)
 print(yaml.safe_dump(cfg))
 PY
