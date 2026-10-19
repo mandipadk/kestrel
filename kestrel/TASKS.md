@@ -107,5 +107,5 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] allow-live-test: allow via Chicago reaches Frankfurt for that device only, undo via Frankfurt reaches Chicago (9/9)
 - [x] Found and fixed: test clients started inside $(...) leaked (disguise-test, watch.sh every 5 min!); probe's fixed PAC port kept a second client from starting
 - [x] Apple CI: engine page test failed once (no response from speed.cloudflare.com), passed on rerun; old-client test: app removed the stand-in (control clean), script bug with bash -e fixed
-- [x] Apple CI 39299184590 green on hold (incl. old-client test); screenshots reviewed; HOLD removed (release run 39301635244)
+- [x] Apple CI 39299184590 green on hold (incl. old-client test); screenshots reviewed; HOLD removed; release run 39301635244 green: Mac 1.4 (build 46) on mac-latest with signed appcast (install, old-client and update tests passed), iPhone 1.3 uploaded to TestFlight
 - [ ] A day with no plain/classical device: revoke "macbook", kestrel_allow_plain: false, kestrel_require_pq: true
