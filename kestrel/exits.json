@@ -1,0 +1,12 @@
+[
+    {
+        "endpoint": "64.181.219.94:443",
+        "pubkey": "a35d443a6dccf245ef96e49bc1d69ae23c7f981f777f092b4d55c0c3443ee41e",
+        "city": "Chicago"
+    },
+    {
+        "endpoint": "92.5.139.56:443",
+        "pubkey": "440376c87aab62c8b54b974069254805d4b0f9a62e1b940aa042c60681bc920e",
+        "city": "Frankfurt"
+    }
+]
