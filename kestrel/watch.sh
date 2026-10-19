@@ -52,6 +52,7 @@ cfg["socks5_listen"] = f"127.0.0.1:{port}"
 cfg.pop("http_proxy_listen", None)
 cfg.pop("control_listen", None)
 cfg.pop("vpn", None)
+cfg.pop("pac_listen", None)
 print(yaml.safe_dump(cfg))
 PY
   "$CLIENT" --config "$cfg" > "$WORK/$city-$link.log" 2>&1 &
