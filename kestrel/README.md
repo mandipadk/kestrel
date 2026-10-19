@@ -61,8 +61,17 @@ No Geph broker, no Geph account, no paid plan.
   the embedded framework, signatures and plist keys. The page's Apps section downloads the
   latest `.dmg` from `/download/mac`, no device needed.
 
-Not built yet, worth doing: a second exit in Chicago with a switcher in the apps (needs root
-there and an Oracle ingress rule).
+- **Two exits.** Frankfurt and Chicago run the same exit build. `/var/lib/kestrel/exits.json` on
+  each lists both; devices learn the list from their report and race both exits, keeping the first
+  to finish an authenticated handshake (the one in use gets a 3 s head start), so a dead exit is
+  left in 11-14 s. The apps can pin one. Chicago pulls the device list from Frankfurt every minute
+  (`pull-devices.sh`) and takes Frankfurt's release daily after it has passed there (`follow.sh`,
+  rolled back if its own lockdown test fails). `live-exits-test.sh` proves automatic choice, pins
+  and failover against the live exits; `conn-rate-test.sh` checks one device stays well under the
+  firewall's 20 new connections/min per address.
+- **Quantum-safe tunnel.** Session keys come from X25519 and ML-KEM-768 together (`kestrel_pq.rs`);
+  both hellos are signed so the KEM can't be stripped. Old apps still use the classical handshake
+  until `kestrel_require_pq: true`.
 
 ## Pieces
 
