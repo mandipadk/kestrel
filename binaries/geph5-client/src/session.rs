@@ -430,7 +430,7 @@ async fn run_connected(
         bridge: bridge_addr,
     };
     let addr: SocketAddr = bridge.parse()?;
-    let mux = start_mux(authed_pipe);
+    let mux = start_mux(authed_pipe, exit_idx.is_some());
     let (accounting, accounting_loop) = bw_accounting_pair();
     let early_dead = Arc::new(ManualResetEvent::new(false));
     let session = Arc::new(ConnectedSession {
@@ -477,12 +477,29 @@ async fn run_connected(
     }
 }
 
-fn start_mux(authed_pipe: impl Pipe) -> Arc<PicoMux> {
+/// Kestrel: ends the sessions opened before the device had an exit list, so
+/// its connections start over on the list (one exit for all of them).
+pub(crate) fn close_sessions_without_exit(ctx: &AnyCtx<Config>) {
+    for (_, session) in ctx.get(CURRENT_SESSIONS).lock().iter() {
+        if session.exit_idx.is_none() {
+            session.early_dead.set();
+        }
+    }
+}
+
+fn start_mux(authed_pipe: impl Pipe, kestrel: bool) -> Arc<PicoMux> {
     let (read, write) = tokio::io::split(authed_pipe);
     let mut mux = PicoMux::new(read, write);
+    // Every new connection sends a ping. Kestrel's own exits answer at once,
+    // so a few seconds without a pong means the exit is gone: fail over then
+    // rather than after the 10-second open timeout.
     mux.set_liveness(LivenessConfig {
         ping_interval: Duration::from_secs(1200),
-        timeout: Duration::from_secs(120),
+        timeout: if kestrel {
+            crate::kestrel_exits::PING_TIMEOUT
+        } else {
+            Duration::from_secs(120)
+        },
     });
     mux.set_debloat(true);
     Arc::new(mux)

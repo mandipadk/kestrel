@@ -103,13 +103,32 @@ pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
         .to_ascii_lowercase()
         .strip_suffix(INTERNAL_DOMAIN)?
         .to_string();
-    match what.as_str() {
+    if !apply_request(device, &what) {
+        return Some(br#"{"error":"unknown request"}"#.to_vec());
+    }
+    Some(device_report(device))
+}
+
+/// Carries out a device's request to its exit. False if it isn't one.
+fn apply_request(device: &str, what: &str) -> bool {
+    match what {
         "status" => {}
         "shield-pause" => shield::pause(device, PAUSE_SECS),
         "shield-resume" => shield::resume(device),
-        _ => return Some(br#"{"error":"unknown request"}"#.to_vec()),
+        _ => {
+            // shield-allow.<domain>, shield-allow-all.<domain>, shield-unallow.<domain>
+            let parsed = what
+                .split_once('.')
+                .and_then(|(verb, domain)| Some((verb, shield::valid_domain(domain)?)));
+            match parsed {
+                Some(("shield-allow", d)) => shield::allow(device, &d, false),
+                Some(("shield-allow-all", d)) => shield::allow(device, &d, true),
+                Some(("shield-unallow", d)) => shield::unallow(device, &d),
+                _ => return false,
+            }
+        }
     }
-    Some(device_report(device))
+    true
 }
 
 /// The owner's exits, as the device should know them (empty if not set).
@@ -573,5 +592,28 @@ impl<P: Pipe> Pipe for UsagePipe<P> {
 
     fn remote_addr(&self) -> Option<&str> {
         self.inner.remote_addr()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn devices_can_allow_and_unallow_domains_by_request() {
+        assert!(apply_request("t-req", "shield-allow.login.example.com"));
+        assert!(apply_request("t-req", "shield-unallow.login.example.com"));
+        for bad in [
+            "shield-allow",
+            "shield-allow.",
+            "shield-allow.localhost",
+            "shield-allow.a..b",
+            "shield-allow.x_y.com",
+            "shield-block.example.com",
+            "rm -rf",
+        ] {
+            assert!(!apply_request("t-req", bad), "{bad:?} was accepted");
+        }
+        assert!(apply_request("t-req", "status"));
     }
 }

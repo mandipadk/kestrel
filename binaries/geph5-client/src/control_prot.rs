@@ -230,10 +230,7 @@ impl ControlProtocol for ControlProtocolImpl {
 
     async fn kestrel_exit(&self, request: String) -> Result<Value, String> {
         use tokio::io::AsyncReadExt;
-        if !matches!(
-            request.as_str(),
-            "status" | "shield-pause" | "shield-resume"
-        ) {
+        if !kestrel_request_ok(&request) {
             return Err(format!("unknown request {request}"));
         }
         if self.ctx.init().kestrel_device.is_none() {
@@ -250,7 +247,46 @@ impl ControlProtocol for ControlProtocolImpl {
             .await
             .map_err(|_| "the exit did not answer in time".to_string())?
             .map_err(|e| format!("{e:#}"))?;
-        serde_json::from_slice(&body).map_err(|e| e.to_string())
+        let report: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        // the report came through our own tunnel from our exit: learn its exit list
+        if let Some(exits) = report.get("exits") {
+            crate::kestrel_exits::learn(&self.ctx, exits);
+        }
+        Ok(report)
+    }
+}
+
+/// What a device may ask its exit: its report, a Shield pause, or allowing a
+/// domain (`shield-allow.<domain>`, `shield-allow-all.<domain>`,
+/// `shield-unallow.<domain>`). It becomes a host name, so nothing else gets in.
+fn kestrel_request_ok(request: &str) -> bool {
+    if matches!(request, "status" | "shield-pause" | "shield-resume") {
+        return true;
+    }
+    let Some((verb, domain)) = request.split_once('.') else {
+        return false;
+    };
+    matches!(verb, "shield-allow" | "shield-allow-all" | "shield-unallow")
+        && domain.len() <= 253
+        && domain.contains('.')
+        && domain.split('.').all(|l| {
+            !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+}
+
+#[cfg(test)]
+mod kestrel_tests {
+    use super::kestrel_request_ok;
+
+    #[test]
+    fn only_known_requests_reach_the_exit() {
+        for ok in ["status", "shield-pause", "shield-allow.login.example.com", "shield-unallow.a.b"] {
+            assert!(kestrel_request_ok(ok), "{ok}");
+        }
+        for bad in ["", "statusx", "shield-allow.", "shield-allow.localhost", "shield-allow.a..b",
+                    "shield-allow.example.com:443", "shield-allow.x/y.com", "other.example.com"] {
+            assert!(!kestrel_request_ok(bad), "{bad}");
+        }
     }
 }
 
