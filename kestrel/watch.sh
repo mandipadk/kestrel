@@ -55,18 +55,20 @@ cfg.pop("vpn", None)
 cfg.pop("pac_listen", None)
 print(yaml.safe_dump(cfg))
 PY
+  # called inside $(...): the client must be stopped here, its pid is lost outside
   "$CLIENT" --config "$cfg" > "$WORK/$city-$link.log" 2>&1 &
-  PIDS+=($!)
+  local pid=$! result=fail
   start=$(date +%s%3N)
   for _ in $(seq 1 15); do
     out=$(curl -s --max-time 6 --socks5-hostname "127.0.0.1:$port" https://1.1.1.1/cdn-cgi/trace 2>/dev/null) || true
     if grep -q '^ip=' <<<"$out"; then
-      echo "ok $(( $(date +%s%3N) - start ))"
-      return
+      result="ok $(( $(date +%s%3N) - start ))"
+      break
     fi
     sleep 2
   done
-  echo fail
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  echo "$result"
 }
 
 NOW=$(date +%s)
