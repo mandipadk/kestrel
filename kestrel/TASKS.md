@@ -55,3 +55,17 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] Fix: kestrel_device.vpn_mtu (apps send 1450) and a 1450 default on macOS too (binaries/geph5-client/src/vpn.rs)
 - [x] EngineTests.testAPageLoadsInPacketsThatFitTheTunnel: 20 kB over TCP through the engine, every packet <= 1450. Control run 39161619655 (test without fix): Mac failed with an 8232-byte packet
 - [x] kestrel/vpn-path-test.py: the apps' packet path on Linux (TUN in a netns): 5 real pages, 25 MB download, MTU check; sync.sh runs it on the live exit before keeping a deploy (rollback otherwise)
+
+## Round 5 (2026-10-19): a second exit, and a quantum-safe tunnel (plan: kestrel/PLAN.md)
+- [x] Quantum-safe handshake: X25519 + ML-KEM-768 hello, both sides sign; client refuses a classical answer to a PQ hello; `kestrel_require_pq` (off until every device is quantum-safe); old apps keep working (tested)
+- [x] Engine: exit list, automatic race (active exit gets a 3 s head start), failover, pins; exits learnt from the report
+- [x] Apps: Exit choice (Automatic, Chicago, Frankfurt), current exit, quantum-safe in the link line; CI engine tests with both exits
+- [x] Firewall: the kestrel user reaches only the local resolver on loopback (replies to others allowed)
+- [x] OWNER: Oracle ingress 443 on Chicago; root install (install-second-exit.sh). Chicago exit a35d443a…e41e, follows Frankfurt's release daily 05:40, pulls the device list every minute
+- [x] exits.json on both exits; lockdown --live 19/19 on each; packet path through Chicago (5 pages, 25 MB at 107 Mbit/s from Frankfurt)
+- [x] live-exits-test.sh against the live exits: automatic, both pins, a cut-off exit is left in 11-14 s (once 22 s), a pinned device does not fall over
+- [x] conn-rate-test.sh: one device opens at most 7 new connections/min to an exit, even failing over (firewall limit 20/min per address)
+- [x] Apple CI run 36 (both exits, testflight=false): all tests passed, nothing published
+- [ ] 30 live failover runs, then lift apps/HOLD (TestFlight + mac-latest)
+- [ ] Failover is 11-14 s, not the planned 10 s (the open-response timeout is 10 s); a faster dead-session check would cut it
+- [ ] kestrel_require_pq once every device reports quantum-safe
