@@ -32,7 +32,7 @@ use sillad::{Pipe, dialer::Dialer as _};
 
 use crate::{
     client::{Config, CtxField},
-    get_dialer::direct_dialer,
+    get_dialer::{direct_dialer, disguised_dialer},
     session::client_auth,
 };
 
@@ -46,6 +46,21 @@ pub const PING_TIMEOUT: Duration = Duration::from_secs(3);
 const ATTEMPT: Duration = Duration::from_secs(10);
 
 static ACTIVE: CtxField<AtomicUsize> = |_| AtomicUsize::new(NONE);
+
+/// Whether the latest exit connection went over the disguised address.
+static DISGUISED: CtxField<std::sync::atomic::AtomicBool> =
+    |_| std::sync::atomic::AtomicBool::new(false);
+/// How long direct gets before the disguised address joins in (automatic).
+const DISGUISE_AFTER: Duration = Duration::from_secs(4);
+
+/// "direct" or "disguised": how this device reached its exit last.
+pub fn link(ctx: &AnyCtx<Config>) -> &'static str {
+    if ctx.get(DISGUISED).load(Ordering::SeqCst) {
+        "disguised"
+    } else {
+        "direct"
+    }
+}
 
 /// The exit list learnt from the exits' reports (empty until one arrives).
 static LEARNT: CtxField<RwLock<Vec<KestrelExit>>> = |_| RwLock::new(Vec::new());
@@ -181,14 +196,56 @@ pub async fn until_switched_from(ctx: &AnyCtx<Config>, idx: usize) {
 
 type Connected = (Box<dyn Pipe>, ExitDescriptor, usize);
 
+/// Dials an exit directly, over its disguised address, or both: in automatic
+/// mode the disguised address joins after `DISGUISE_AFTER` (at once if it was
+/// what worked last), and the first link up wins.
+async fn dial_link(
+    ctx: &AnyCtx<Config>,
+    exit: &KestrelExit,
+) -> anyhow::Result<(ed25519_dalek::VerifyingKey, ExitDescriptor, Box<dyn Pipe>, bool)> {
+    let device = ctx.init().kestrel_device.as_ref().context("not a Kestrel device")?;
+    let (pubkey, descriptor, direct) =
+        direct_dialer(ctx, &exit.endpoint, &exit.pubkey, &exit.city).await?;
+    // the disguise carries the stealth link only
+    let disguise = exit.disguise.as_deref().filter(|_| device.stealth);
+    let mode = device.link.as_deref().unwrap_or("auto");
+    let Some(url) = disguise.filter(|_| mode != "direct") else {
+        anyhow::ensure!(mode != "disguised", "the {} exit has no disguised address", exit.city);
+        let pipe = direct.dial().await.context("could not dial")?;
+        return Ok((pubkey, descriptor, pipe, false));
+    };
+    let disguised = disguised_dialer(url, &pubkey);
+    if mode == "disguised" {
+        let pipe = disguised.dial().await.context("could not dial the disguised address")?;
+        return Ok((pubkey, descriptor, pipe, true));
+    }
+    let wait = if ctx.get(DISGUISED).load(Ordering::SeqCst) {
+        Duration::ZERO
+    } else {
+        DISGUISE_AFTER
+    };
+    let direct = async { direct.dial().await.map(|p| (p, false)) };
+    let disguised = async {
+        tokio::time::sleep(wait).await;
+        disguised.dial().await.map(|p| (p, true))
+    };
+    let (pipe, was_disguised) = futures_util::future::select_ok([
+        Box::pin(direct) as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>,
+        Box::pin(disguised),
+    ])
+    .await
+    .context("could not dial directly or disguised")?
+    .0;
+    Ok((pubkey, descriptor, pipe, was_disguised))
+}
+
 async fn attempt(ctx: &AnyCtx<Config>, idx: usize, exit: KestrelExit) -> anyhow::Result<Connected> {
     async {
-        let (pubkey, descriptor, dialer) =
-            direct_dialer(ctx, &exit.endpoint, &exit.pubkey, &exit.city).await?;
-        let pipe = dialer.dial().await.context("could not dial")?;
+        let (pubkey, descriptor, pipe, disguised) = dial_link(ctx, &exit).await?;
         let authed = client_auth(ctx, pipe, pubkey)
             .await
             .context("could not client auth")?;
+        ctx.get(DISGUISED).store(disguised, Ordering::SeqCst);
         anyhow::Ok((Box::new(authed) as Box<dyn Pipe>, descriptor, idx))
     }
     .timeout(ATTEMPT)
@@ -267,6 +324,7 @@ mod tests {
             endpoint: format!("{}.example:443", city.to_lowercase()),
             pubkey: key.to_string().repeat(64),
             city: city.into(),
+            disguise: None,
         }
     }
 

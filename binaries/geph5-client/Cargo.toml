@@ -125,10 +125,13 @@ rlimit = "0.10.2"
 async-channel = "2.5.0"
 native-tls = "0.2"
 tracing-oslog = "0.3.0"
+# Kestrel's disguised link: a WebSocket over HTTPS
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
+webpki-roots = "1"
 
 [dev-dependencies]
 rcgen = "0.13.2"
-tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Networking_WinSock"] }

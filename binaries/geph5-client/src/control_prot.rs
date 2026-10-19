@@ -247,7 +247,11 @@ impl ControlProtocol for ControlProtocolImpl {
             .await
             .map_err(|_| "the exit did not answer in time".to_string())?
             .map_err(|e| format!("{e:#}"))?;
-        let report: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        let mut report: Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        // how this device reached the exit (only the device knows)
+        if let Some(obj) = report.as_object_mut() {
+            obj.insert("link".into(), crate::kestrel_exits::link(&self.ctx).into());
+        }
         // the report came through our own tunnel from our exit: learn its exit list
         if let Some(exits) = report.get("exits") {
             crate::kestrel_exits::learn(&self.ctx, exits);

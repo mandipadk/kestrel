@@ -433,6 +433,16 @@ mod tests {
 
 /// A dialer straight to one exit at `dir` ("host:port") with the given
 /// ed25519 public key (hex). Kestrel calls it for each of the owner's exits.
+/// Kestrel: the stealth link to an exit, carried inside its disguised address
+/// (a WebSocket over HTTPS, see `kestrel_disguise`).
+pub(crate) fn disguised_dialer(url: &str, pubkey: &VerifyingKey) -> DynDialer {
+    SosistabDialer {
+        inner: crate::kestrel_disguise::DisguiseDialer { url: url.to_string() }.dynamic(),
+        cookie: Cookie::new(&geph5_misc_rpc::kestrel::stealth_cookie(pubkey.as_bytes())),
+    }
+    .dynamic()
+}
+
 pub(crate) async fn direct_dialer(
     ctx: &AnyCtx<Config>,
     dir: &str,

@@ -25,6 +25,7 @@ mod database;
 mod device_metadata;
 mod dial_logging;
 mod http_proxy;
+mod kestrel_disguise;
 mod kestrel_exits;
 mod litecopy;
 pub mod logging;
