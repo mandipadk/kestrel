@@ -43,6 +43,10 @@ pub struct KestrelDevice {
     /// connect time, and whichever answers if it stops).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_choice: Option<String>,
+    /// How to reach the exits: None (automatic: direct, and the disguised
+    /// address too when direct doesn't answer), "direct" or "disguised".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// One of the owner's exits, as a device knows it.
@@ -54,6 +58,11 @@ pub struct KestrelExit {
     pub pubkey: String,
     /// Shown in the apps, e.g. "Chicago".
     pub city: String,
+    /// The exit's disguised address (`wss://host/path`): a WebSocket on the
+    /// owner's Cloudflare zone that hands the bytes to this exit, for networks
+    /// that block the exit's own address or random-looking traffic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disguise: Option<String>,
 }
 
 impl KestrelDevice {
@@ -68,6 +77,7 @@ impl KestrelDevice {
             classical_handshake: false,
             exits: Vec::new(),
             exit_choice: None,
+            link: None,
         }
     }
 
