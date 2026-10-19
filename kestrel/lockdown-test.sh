@@ -151,6 +151,27 @@ if curl -sS --max-time 8 --socks5-hostname "127.0.0.1:$P" telnet://127.0.0.1:22 
 else
   ok "loopback and private addresses are unreachable through the exit"
 fi
+# loopback written as IPv6 (an IPv4-mapped address once got past the exit's checks),
+# named the way the engine names an IPv6 destination to the exit: "[addr]:port"
+reached=""
+for addr in "[::ffff:127.0.0.1]" "[::1]"; do
+  python3 - "$P" "$addr" <<'PY' && reached+=" $addr"
+import socket, struct, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=8)
+s.sendall(b"\x05\x01\x00"); s.recv(2)
+host = sys.argv[2].encode()
+s.sendall(b"\x05\x01\x00\x03" + bytes([len(host)]) + host + struct.pack(">H", 22))
+try:
+    r = s.recv(4)
+    if len(r) < 4 or r[1] != 0:
+        sys.exit(1)
+    s.recv({1: 6, 4: 18}.get(r[3]) or s.recv(1)[0] + 2)
+    sys.exit(0 if s.recv(4).startswith(b"SSH") else 1)
+except OSError:
+    sys.exit(1)
+PY
+done
+[[ -z $reached ]] && ok "loopback written as IPv6 is unreachable too" || bad "enrolled device reached the exit host loopback as$reached"
 # every service listening on this host's loopback, not just SSH
 leaked=""
 for lport in $(ss -Htln | awk '{print $4}' | grep -E '^(127\.[0-9.]+|0\.0\.0\.0|\*):[0-9]+$' | sed 's/.*://' | sort -un | head -40); do
