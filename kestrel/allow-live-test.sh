@@ -16,7 +16,8 @@ PIDS=()
 pass=0 fail=0
 ok() { echo "ok    $*"; pass=$((pass + 1)); }
 bad() { echo "FAIL  $*"; fail=$((fail + 1)); }
-cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }
+# clients start inside $(...), so their pids go to a file, not PIDS
+cleanup() { for p in "${PIDS[@]}" $(cat "$WORK/pids" 2>/dev/null); do kill "$p" 2>/dev/null; done; wait 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
 free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
@@ -39,7 +40,7 @@ for k in ("http_proxy_listen", "control_listen", "pac_listen", "vpn"):
 print(yaml.safe_dump(cfg))
 PY
   "$CLIENT" --config "$WORK/$city.yaml" > "$WORK/$city.log" 2>&1 &
-  PIDS+=($!)
+  echo $! >> "$WORK/pids"
   for _ in $(seq 20); do
     curl -s --max-time 5 --socks5-hostname "127.0.0.1:$port" https://1.1.1.1/cdn-cgi/trace >/dev/null 2>&1 && break
     sleep 1
