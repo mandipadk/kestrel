@@ -30,10 +30,7 @@ struct MenuBarPanel: View {
                     .padding(.bottom, 8)
             }
             ExtensionNotice(compact: true)
-            if model.legacyProxyOn {
-                Notice(symbol: "exclamationmark.triangle", title: "The old Kestrel command is still on",
-                       detail: "Run kestrel off in Terminal once. This app replaces it.")
-            }
+            OldClientNotice()
             if let version = updates.waiting {
                 Notice(symbol: "arrow.down.circle", title: "Kestrel \(version) is ready",
                        detail: "Install it now. Kestrel reopens by itself and your tunnel reconnects.",
@@ -134,7 +131,94 @@ struct MenuBarPanel: View {
                 RowLabel(shield.paused ? "Resume Shield" : "Pause Shield for 1 Hour")
             }
             .buttonStyle(PanelRowStyle())
+            Button {
+                openWindow(id: JustBlockedView.windowID)
+                NSApp.activate()
+            } label: {
+                RowLabel("Just Blocked…", shortcut: shield.recent.isEmpty ? nil : shield.recent.count.formatted())
+            }
+            .buttonStyle(PanelRowStyle())
         }
+    }
+}
+
+// MARK: - Just blocked
+
+/// What Shield just stopped for this Mac, newest first, so a site that broke
+/// can be fixed here: allow what it needed on this Mac or on every device.
+struct JustBlockedView: View {
+    static let windowID = "blocked"
+    @EnvironmentObject var model: TunnelModel
+
+    var body: some View {
+        Form {
+            Section {
+                if recent.isEmpty {
+                    Text(model.isOn ? "Nothing blocked since the exit last started." : "Connect to see what Shield blocks.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(recent, id: \.domain) { item in
+                        LabeledContent {
+                            Menu("Allow") {
+                                Button("Allow on This Mac") { Task { await model.allow(item.domain) } }
+                                Button("Allow on All Devices") { Task { await model.allow(item.domain, everywhere: true) } }
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                        } label: {
+                            Text(item.domain).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                            Text(detail(item))
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            } header: {
+                Text("Just blocked")
+            } footer: {
+                Text("If a site just broke, what it needed is usually near the top.")
+                    .foregroundStyle(.secondary)
+            }
+            if !allowed.isEmpty {
+                Section("Allowed") {
+                    ForEach(allowed, id: \.self) { entry in
+                        LabeledContent {
+                            Button("Block Again") { Task { await model.unallow(entry.domain) } }
+                        } label: {
+                            Text(entry.domain).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                            Text(entry.everywhere ? "On all devices" : "On this Mac")
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .animation(.easeOut(duration: 0.2), value: recent)
+        .frame(minWidth: 420, minHeight: 360)
+        .task {
+            // fresh while the window is open
+            while !Task.isCancelled {
+                await model.refreshReport()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private var recent: [ExitReport.Blocked] { model.report?.shield.recent ?? [] }
+
+    private struct Allowed: Hashable {
+        let domain: String
+        let everywhere: Bool
+    }
+
+    private var allowed: [Allowed] {
+        let shield = model.report?.shield
+        return (shield?.allowed ?? []).map { Allowed(domain: $0, everywhere: false) }
+            + (shield?.allowedEverywhere ?? []).map { Allowed(domain: $0, everywhere: true) }
+    }
+
+    private func detail(_ item: ExitReport.Blocked) -> String {
+        let when = item.last.formatted(.relative(presentation: .named))
+        return item.count > 1 ? "\(item.count) times, last \(when)" : when
     }
 }
 
@@ -210,6 +294,25 @@ struct PanelRowStyle: ButtonStyle {
                 .opacity(enabled ? 1 : 0.4)
                 .onHover { hover = $0 }
         }
+    }
+}
+
+/// Offers to remove the command-line client from before this app, while it
+/// is still on this Mac.
+struct OldClientNotice: View {
+    @ObservedObject var old = OldClient.shared
+
+    var body: some View {
+        Group {
+            if old.present {
+                Notice(symbol: "arrow.triangle.2.circlepath", title: "The old Kestrel client is still running",
+                       detail: old.problem ?? "Your browsers go through it instead of this app: no Shield and the old link. Kestrel can remove it; macOS may ask for your password.",
+                       button: old.working ? "Removing…" : "Remove Old Client",
+                       action: { Task { await old.remove() } })
+                    .disabled(old.working)
+            }
+        }
+        .onAppear { old.refresh() }
     }
 }
 
@@ -366,6 +469,15 @@ struct GeneralSettings: View {
                     .pickerStyle(.menu)
                 }
             }
+            if model.canDisguise {
+                Section {
+                    Toggle(isOn: Binding(get: { model.link == "disguised" },
+                                         set: { v in Task { await model.setLink(v ? "disguised" : nil) } })) {
+                        Text("Always disguise")
+                        Text("Kestrel switches to looking like ordinary web traffic by itself when a network blocks it. Turn this on to use it from the start.")
+                    }
+                }
+            }
             Section {
                 LabeledContent {
                     Text(shieldState).foregroundStyle(.secondary)
@@ -394,7 +506,7 @@ struct GeneralSettings: View {
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(height: model.exits.count > 1 ? 452 : 372)
+        .frame(height: 372 + (model.exits.count > 1 ? 80 : 0) + (model.canDisguise ? 76 : 0))
     }
 
     private var shieldState: String {

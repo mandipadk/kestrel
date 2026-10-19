@@ -1,10 +1,12 @@
 import Foundation
 
-/// One of the owner's exits: city, endpoint and its public key.
+/// One of the owner's exits: city, endpoint, its public key, and its
+/// disguised address (wss://, learnt from the exit's report) if it has one.
 struct KestrelExit: Codable, Equatable, Hashable {
     let c: String
     let e: String
     let k: String
+    var d: String? = nil
 
     var city: String { c }
 }
@@ -68,12 +70,19 @@ struct DeviceKey: Codable, Equatable {
     /// first exit, or (with `exits`) to whichever of them the engine picks.
     var clientConfig: String { clientConfig(exits: x ?? [], choice: nil) }
 
-    func clientConfig(exits: [KestrelExit], choice: String?) -> String {
+    /// `link`: nil (automatic: direct, disguised when direct doesn't answer)
+    /// or "disguised" (always through the exits' disguised addresses).
+    func clientConfig(exits: [KestrelExit], choice: String?, link: String? = nil) -> String {
         var device: [String: Any] = ["name": n, "secret": s, "stealth": true, "vpn_mtu": 1450]
         if !exits.isEmpty {
-            device["exits"] = exits.map { ["endpoint": $0.e, "pubkey": $0.k, "city": $0.c] }
+            device["exits"] = exits.map { x -> [String: String] in
+                var entry = ["endpoint": x.e, "pubkey": x.k, "city": x.c]
+                if let d = x.d { entry["disguise"] = d }
+                return entry
+            }
             if let choice { device["exit_choice"] = choice }
         }
+        if let link { device["link"] = link }
         let cfg: [String: Any] = [
             "exit_constraint": ["direct": "\(e)/\(k)"],
             "allow_direct": false,

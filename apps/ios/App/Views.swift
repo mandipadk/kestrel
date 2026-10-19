@@ -69,6 +69,7 @@ struct WelcomeView: View {
 struct HomeView: View {
     @EnvironmentObject var model: TunnelModel
     @State private var showSettings = ProcessInfo.processInfo.arguments.contains("-KestrelShowSettings")
+    @State private var showBlocked = ProcessInfo.processInfo.arguments.contains("-KestrelShowBlocked")
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -113,6 +114,25 @@ struct HomeView: View {
                     .padding(.top, 24)
                     .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
                     .padding(.top, 8)
+
+                    if let shield = model.report?.shield, shield.on, model.isOn {
+                        Button { showBlocked = true } label: {
+                            HStack {
+                                Text("Just blocked").font(.geist(16, .medium))
+                                Spacer()
+                                if !shield.recent.isEmpty {
+                                    Text(shield.recent.count.formatted()).font(.geistMono(14)).foregroundStyle(Ink.muted)
+                                }
+                                Image(systemName: "chevron.right").foregroundStyle(Ink.faint)
+                            }
+                            .foregroundStyle(Ink.ink)
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
+                        .padding(.top, 16)
+                    }
                 }
                 .padding(.top, 40)
                 .padding(.bottom, 24)
@@ -132,6 +152,103 @@ struct HomeView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .sheet(isPresented: $showSettings) { SettingsSheet().presentationDetents([.large]) }
+        .sheet(isPresented: $showBlocked) { JustBlockedSheet().presentationDetents([.medium, .large]) }
+    }
+}
+
+// MARK: - Just blocked
+
+/// What Shield just stopped for this iPhone, newest first: when an app or site
+/// breaks, allow what it needed here or on every device.
+struct JustBlockedSheet: View {
+    @EnvironmentObject var model: TunnelModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Just blocked").font(.geist(22, .semibold)).tracking(-0.6)
+                Text("If something just broke, what it needed is usually near the top.")
+                    .font(.geist(14)).foregroundStyle(Ink.muted).padding(.top, 4).padding(.bottom, 16)
+                if recent.isEmpty {
+                    Text("Nothing blocked since the exit last started.")
+                        .font(.geist(15)).foregroundStyle(Ink.muted)
+                        .frame(minHeight: 52, alignment: .leading)
+                }
+                ForEach(recent, id: \.domain) { item in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.domain).font(.geistMono(14)).lineLimit(1).truncationMode(.middle)
+                            Text(detail(item)).font(.geist(13)).foregroundStyle(Ink.muted)
+                        }
+                        Spacer()
+                        Menu {
+                            Button("On this iPhone") { allow(item.domain, everywhere: false) }
+                            Button("On all my devices") { allow(item.domain, everywhere: true) }
+                        } label: {
+                            Text("Allow").font(.geist(15, .medium)).foregroundStyle(Ink.accent)
+                                .frame(minWidth: 64, minHeight: 44)
+                        }
+                    }
+                    .frame(minHeight: 60)
+                    .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+                if !allowed.isEmpty {
+                    Text("Allowed").font(.geist(16, .medium)).padding(.top, 32).padding(.bottom, 8)
+                    ForEach(allowed, id: \.self) { entry in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.domain).font(.geistMono(14)).lineLimit(1).truncationMode(.middle)
+                                Text(entry.everywhere ? "On all devices" : "On this iPhone").font(.geist(13)).foregroundStyle(Ink.muted)
+                            }
+                            Spacer()
+                            Button("Block again") {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                Task { await model.unallow(entry.domain) }
+                            }
+                            .font(.geist(15, .medium)).foregroundStyle(Ink.muted)
+                            .frame(minHeight: 44)
+                        }
+                        .frame(minHeight: 60)
+                        .overlay(alignment: .top) { Rectangle().fill(Ink.line).frame(height: 1) }
+                    }
+                }
+            }
+            .padding(24)
+            .animation(.easeOut(duration: 0.25), value: recent)
+        }
+        .refreshable { await model.refreshReport() }
+        .background(Ink.raise.ignoresSafeArea())
+        .foregroundStyle(Ink.ink)
+        .task {
+            while !Task.isCancelled {
+                await model.refreshReport()
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private struct Allowed: Hashable {
+        let domain: String
+        let everywhere: Bool
+    }
+
+    private var recent: [ExitReport.Blocked] { model.report?.shield.recent ?? [] }
+
+    private var allowed: [Allowed] {
+        let shield = model.report?.shield
+        return (shield?.allowed ?? []).map { Allowed(domain: $0, everywhere: false) }
+            + (shield?.allowedEverywhere ?? []).map { Allowed(domain: $0, everywhere: true) }
+    }
+
+    private func allow(_ domain: String, everywhere: Bool) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task { await model.allow(domain, everywhere: everywhere) }
+    }
+
+    private func detail(_ item: ExitReport.Blocked) -> String {
+        let when = item.last.formatted(.relative(presentation: .named))
+        return item.count > 1 ? "\(item.count) times, last \(when)" : when
     }
 }
 
@@ -165,6 +282,20 @@ struct SettingsSheet: View {
                 if model.exits.count > 1 {
                     ExitChoice()
                         .padding(.bottom, 8)
+                }
+
+                if model.canDisguise {
+                    Divider().overlay(Ink.line)
+                    Toggle(isOn: Binding(get: { model.link == "disguised" },
+                                         set: { v in Task { await model.setLink(v ? "disguised" : nil) } })) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Always disguise").font(.geist(16, .medium))
+                            Text("Kestrel switches to looking like ordinary web traffic by itself when a network blocks it. Turn this on to use it from the start.")
+                                .font(.geist(14)).foregroundStyle(Ink.muted)
+                        }
+                    }
+                    .tint(Ink.accent)
+                    .padding(.vertical, 12)
                 }
 
                 Divider().overlay(Ink.line)

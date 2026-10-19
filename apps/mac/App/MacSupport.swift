@@ -136,3 +136,94 @@ enum MenuBarIcon {
         return image
     }
 }
+
+/// The command-line client from before this app: a LaunchAgent that keeps
+/// itself running and points this Mac's proxies at itself (SOCKS 9909, web
+/// 9910). While it's there, browsers go around the app's tunnel: the old
+/// plain link to Frankfurt, no Shield, no quantum-safe handshake. The app
+/// removes it in one go: the proxies it set, the agent, and its files.
+@MainActor
+final class OldClient: ObservableObject {
+    static let shared = OldClient()
+    static let label = "dev.mandip.kestrel"
+
+    @Published private(set) var present = false
+    @Published private(set) var working = false
+    @Published var problem: String?
+
+    private let home = FileManager.default.homeDirectoryForCurrentUser
+    private var agent: URL { home.appendingPathComponent("Library/LaunchAgents/\(Self.label).plist") }
+    private var files: [URL] {
+        [agent, home.appendingPathComponent(".kestrel"), home.appendingPathComponent(".local/bin/kestrel")]
+    }
+
+    func refresh() {
+        let fm = FileManager.default
+        present = fm.fileExists(atPath: agent.path)
+            || fm.fileExists(atPath: home.appendingPathComponent(".kestrel/kestrel-client").path)
+            || !Self.oldProxies().isEmpty
+    }
+
+    /// Removes the old client. True when nothing of it is left.
+    @discardableResult
+    func remove() async -> Bool {
+        working = true
+        defer { working = false }
+        problem = nil
+        // the proxies first: with the client gone they would point at nothing
+        let off = Self.oldProxies().map { ["/usr/sbin/networksetup", $0.off, $0.service, "off"] }
+        if !off.isEmpty, !off.allSatisfy({ Self.run($0).status == 0 }) {
+            // macOS wanted an administrator: ask once for all of them
+            let script = off.map { $0.map(Self.shellQuote).joined(separator: " ") }.joined(separator: "; ")
+            let ok = Self.run(["/usr/bin/osascript", "-e",
+                               "do shell script \"\(script.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\" with administrator privileges"]).status == 0
+            if !ok { problem = "macOS didn't let Kestrel turn the old proxies off." }
+        }
+        _ = Self.run(["/bin/launchctl", "bootout", "gui/\(getuid())/\(Self.label)"])
+        for url in files { try? FileManager.default.removeItem(at: url) }
+        refresh()
+        if present && problem == nil { problem = "Part of the old client is still there." }
+        return !present
+    }
+
+    struct Proxy { let service: String; let off: String }
+
+    /// The proxies on this Mac's network services that point at the old client.
+    static func oldProxies() -> [Proxy] {
+        let list = run(["/usr/sbin/networksetup", "-listallnetworkservices"]).output
+        let services = list.split(separator: "\n").dropFirst().map(String.init)
+            .filter { !$0.hasPrefix("*") && !$0.isEmpty }
+        let kinds = [("-getsocksfirewallproxy", "-setsocksfirewallproxystate", "9909"),
+                     ("-getwebproxy", "-setwebproxystate", "9910"),
+                     ("-getsecurewebproxy", "-setsecurewebproxystate", "9910")]
+        var found: [Proxy] = []
+        for service in services {
+            for (get, off, port) in kinds {
+                let info = run(["/usr/sbin/networksetup", get, service]).output
+                let lines = Set(info.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) })
+                if lines.contains("Enabled: Yes"), lines.contains("Server: 127.0.0.1"), lines.contains("Port: \(port)") {
+                    found.append(Proxy(service: service, off: off))
+                }
+            }
+        }
+        return found
+    }
+
+    private static func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    @discardableResult
+    static func run(_ argv: [String]) -> (status: Int32, output: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: argv[0])
+        p.arguments = Array(argv.dropFirst())
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = Pipe()
+        do { try p.run() } catch { return (-1, "") }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+}
