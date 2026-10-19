@@ -233,6 +233,52 @@ jobs:
           systemextensionsctl list || true
           log show --last 3m --style compact --predicate 'process == "sysextd"' | tail -40 || true
           exit $rc
+      # The round-1 command-line client, as the owner's Mac still has it: a
+      # KeepAlive LaunchAgent and the Mac's proxies pointed at it. The app,
+      # as installed above, must find it and leave nothing of it behind.
+      - name: Old client test (the app removes the command-line client)
+        if: steps.devid.outputs.ready == 'true'
+        run: |
+          set -u
+          # control: nothing there yet, so the app finds nothing (exit 1)
+          if /Applications/Kestrel.app/Contents/MacOS/Kestrel --remove-old-client; then
+            echo "::error::the app found an old client on a clean runner"; exit 1
+          fi
+          mkdir -p ~/.kestrel ~/.local/bin ~/Library/LaunchAgents
+          cp /bin/sleep ~/.kestrel/kestrel-client
+          printf '#!/bin/bash\necho old\n' > ~/.local/bin/kestrel; chmod +x ~/.local/bin/kestrel
+          cat > ~/Library/LaunchAgents/dev.mandip.kestrel.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>Label</key><string>dev.mandip.kestrel</string>
+            <key>ProgramArguments</key><array><string>$HOME/.kestrel/kestrel-client</string><string>86400</string></array>
+            <key>KeepAlive</key><true/>
+            <key>RunAtLoad</key><true/>
+          </dict></plist>
+          PLIST
+          launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.mandip.kestrel.plist || true
+          networksetup -listallnetworkservices | tail -n +2 | grep -v '^\*' | while read -r svc; do
+            sudo networksetup -setsocksfirewallproxy "$svc" 127.0.0.1 9909
+            sudo networksetup -setwebproxy "$svc" 127.0.0.1 9910
+            sudo networksetup -setsecurewebproxy "$svc" 127.0.0.1 9910
+          done
+          launchctl print "gui/$(id -u)/dev.mandip.kestrel" >/dev/null && echo "old client running"
+          # (an administrator prompt would hang here: give up after 2 minutes)
+          rc=0
+          perl -e 'alarm 120; exec @ARGV' /Applications/Kestrel.app/Contents/MacOS/Kestrel --remove-old-client || { echo "::error::the app did not remove the old client"; rc=1; }
+          launchctl print "gui/$(id -u)/dev.mandip.kestrel" >/dev/null 2>&1 && { echo "::error::the old agent still runs"; rc=1; }
+          for f in ~/.kestrel ~/.local/bin/kestrel ~/Library/LaunchAgents/dev.mandip.kestrel.plist; do
+            [[ -e $f ]] && { echo "::error::$f is still there"; rc=1; }
+          done
+          left=$(networksetup -listallnetworkservices | tail -n +2 | grep -v '^\*' | while read -r svc; do
+            for k in -getsocksfirewallproxy -getwebproxy -getsecurewebproxy; do
+              networksetup $k "$svc" | grep -q '^Enabled: Yes' && echo "$svc $k"
+            done
+          done)
+          [[ -z $left ]] || { echo "::error::proxies still on: $left"; rc=1; }
+          curl -sS --max-time 15 -o /dev/null -w 'page after removal: %{http_code}\n' https://example.com/ || rc=1
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: steps.devid.outputs.ready == 'true'
         with:
