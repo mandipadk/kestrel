@@ -3,7 +3,7 @@
 # covers that crate on that version line: a bump, or the same id on another
 # crate, is reported again. Remove a line once it no longer applies.
 # Looked at 2026-10-19 (round 5).
-RUSTSEC-2023-0071 rsa 0.8 no fix released; timing of RSA private-key operations, used only by upstream's blind-signature broker login, which Kestrel (no broker) never runs
+RUSTSEC-2023-0071 rsa 0.8 no fix released; timing of RSA private-key operations. Linked into geph5-exit/-client/kestrelctl via mizaru2 (upstream's blind-signature tokens), but the only private-key operation (blind_sign) runs on upstream's broker; our binaries never call it, and the token check (verify_user) runs only with a broker configured (rechecked 2026-10-19)
 GHSA-9c48-w39g-hm26 rsa 0.8 panic when building a private key from a prime equal to 1; Kestrel never builds RSA keys
 RUSTSEC-2023-0071 rsa 0.9 no fix released; only in upstream's broker and tools, not in geph5-exit, geph5-client or kestrelctl
 RUSTSEC-2026-0346 rustls 0.21 only via sqlx-core's Postgres TLS in upstream's geph5-broker; not built into the exit, the apps' engine or kestrelctl
