@@ -17,26 +17,33 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tokio_rustls::rustls::{self, pki_types::ServerName};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, http::HeaderValue};
 
+trait Duplex: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Duplex for T {}
+
 const PING_EVERY: Duration = Duration::from_secs(20);
 /// Bytes buffered between the engine and the WebSocket in each direction.
 const BUFFER: usize = 256 * 1024;
 
-/// Dials `wss://host[:port]/path`.
+/// Dials `wss://host[:port]/path` (or `ws://127.0.0.1:port/path`, for tests).
 pub struct DisguiseDialer {
     pub url: String,
 }
 
 /// Splits a `wss://` URL into its host, port and path, or None if it is
-/// anything else.
+/// anything else. Plain `ws://` only to this machine's loopback (tests).
 pub fn parse_url(url: &str) -> Option<(String, u16, String)> {
-    let rest = url.strip_prefix("wss://")?;
+    let (rest, tls) = match url.strip_prefix("wss://") {
+        Some(rest) => (rest, true),
+        None => (url.strip_prefix("ws://127.0.0.1:")?, false),
+    };
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((h, p)) => (h, p.parse().ok()?),
-        None => (authority, 443),
+    let (host, port) = match (tls, authority.rsplit_once(':')) {
+        (true, Some((h, p))) => (h, p.parse().ok()?),
+        (true, None) => (authority, 443),
+        (false, _) => ("127.0.0.1", authority.parse().ok()?),
     };
     let ok_host = !host.is_empty()
         && host
@@ -78,10 +85,16 @@ impl Dialer for DisguiseDialer {
             .ok_or_else(|| bad(format!("{host} has no address")))?;
         let tcp = tokio::net::TcpStream::connect(addr).await?;
         tcp.set_nodelay(true)?;
-        let name = ServerName::try_from(host.clone()).map_err(|e| bad(e.to_string()))?;
-        let tls = tokio_rustls::TlsConnector::from(tls_config())
-            .connect(name, tcp)
-            .await?;
+        let stream: Box<dyn Duplex> = if self.url.starts_with("wss://") {
+            let name = ServerName::try_from(host.clone()).map_err(|e| bad(e.to_string()))?;
+            Box::new(
+                tokio_rustls::TlsConnector::from(tls_config())
+                    .connect(name, tcp)
+                    .await?,
+            )
+        } else {
+            Box::new(tcp)
+        };
         let mut request = self
             .url
             .as_str()
@@ -91,7 +104,7 @@ impl Dialer for DisguiseDialer {
             "User-Agent",
             HeaderValue::from_static("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"),
         );
-        let (ws, _) = tokio_tungstenite::client_async(request, tls)
+        let (ws, _) = tokio_tungstenite::client_async(request, stream)
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e.to_string()))?;
         let (ours, theirs) = tokio::io::duplex(BUFFER);
@@ -209,8 +222,14 @@ mod tests {
             parse_url("wss://Edge.example.dev:8443"),
             Some(("edge.example.dev".into(), 8443, "/".into()))
         );
+        assert_eq!(
+            parse_url("ws://127.0.0.1:8790/k/abc"),
+            Some(("127.0.0.1".into(), 8790, "/k/abc".into()))
+        );
         for bad in [
             "ws://edge.example.dev/k",
+            "ws://localhost:8790/k",
+            "ws://127.0.0.1/k",
             "https://edge.example.dev/k",
             "wss:///k",
             "wss://edge.example.dev:x/k",

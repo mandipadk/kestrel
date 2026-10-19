@@ -1,0 +1,10 @@
+[Unit]
+Description=Kestrel: check the other exit every 5 minutes
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=300
+AccuracySec=20
+
+[Install]
+WantedBy=timers.target
