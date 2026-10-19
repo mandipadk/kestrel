@@ -153,8 +153,31 @@ static FAILURES: LazyLock<Cache<IpAddr, u32>> = LazyLock::new(|| {
         .build()
 });
 
+/// Addresses an enrolled device signed in from in the last day. They are never
+/// blocked: a device behind them may leave half-made connections (racing both
+/// exits, changing networks) and must not lock itself out of its backup exit.
+static TRUSTED: LazyLock<Cache<IpAddr, ()>> = LazyLock::new(|| {
+    Cache::builder()
+        .time_to_live(Duration::from_secs(86400))
+        .max_capacity(10_000)
+        .build()
+});
+
 pub fn is_banned(ip: IpAddr) -> bool {
-    !ip.is_loopback() && FAILURES.get(&ip).unwrap_or(0) >= MAX_FAILURES
+    !ip.is_loopback()
+        && !TRUSTED.contains_key(&ip)
+        && FAILURES.get(&ip).unwrap_or(0) >= MAX_FAILURES
+}
+
+/// Whether a peer closed the connection (rather than sending junk or staying silent).
+pub fn hung_up(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+    )
 }
 
 pub fn record_failure(ip: IpAddr) {
@@ -162,6 +185,9 @@ pub fn record_failure(ip: IpAddr) {
         return;
     }
     count_rejection();
+    if TRUSTED.contains_key(&ip) {
+        return;
+    }
     let n = FAILURES.get(&ip).unwrap_or(0) + 1;
     FAILURES.insert(ip, n);
     if n == MAX_FAILURES {
@@ -310,6 +336,8 @@ pub fn note_connection(device: &Device, ip: Option<IpAddr>, stealth: bool, quant
     usage.stealth.store(stealth, Ordering::Relaxed);
     usage.quantum_safe.store(quantum_safe, Ordering::Relaxed);
     let Some(ip) = ip else { return };
+    TRUSTED.insert(ip, ());
+    FAILURES.invalidate(&ip);
     geph5_rt::spawn(async move {
         let network = network_of(ip).await;
         if network.0 != 0 {

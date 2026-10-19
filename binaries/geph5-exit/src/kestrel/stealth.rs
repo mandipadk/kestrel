@@ -193,6 +193,10 @@ impl KestrelListener {
                             }
                             hold_and_drop(conn).await;
                         }
+                        // hanging up before saying anything is what a device does with a
+                        // connection it no longer needs (it raced both exits, or changed
+                        // networks): not a failure. Staying silent until the timeout is.
+                        Err(err) if super::hung_up(&err) => {}
                         Err(_) => {
                             if let Some(ip) = ip {
                                 super::record_failure(ip);
