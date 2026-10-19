@@ -97,11 +97,15 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] Allow lists merge both ways between exits (allow-sync.py, three-way); exits reload device allows
 - [x] Exit watch (watch.sh + kestrel-watch.timer), state.py summary, page uptime strip; exit notes disguised devices
 - [x] Apps: Mac removes the old client (panel notice + --remove-old-client for CI); Just Blocked (Mac window, iPhone sheet); Always disguise setting; Mac 1.4 / iPhone 1.3; CI old-client test
-- [ ] Unit tests green on Frankfurt; local lockdown; local disguise test over loopback + control with the old engine
-- [ ] OWNER (root, sent): firewall loopback exemption + watch timer on both exits
+- [x] Unit tests green on Frankfurt (exit 41, misc-rpc 12, kestrelctl 4, engine 34); local lockdown 44/44; disguise-test over loopback 10/10 (blocked address -> disguised in 4 s, 215-240 Mbit/s), control with a05a98a engine fails as it should
+- [x] OWNER approved root (second ask; the first timed out on my side): loopback exempt from the exit's per-address limits, kestrel-watch.timer on both exits
 - [ ] BLOCKED: public launch of kestrel-edge / kestrel-edge-fra (my session's safety check refuses public surfaces, even via power run)
-- [ ] Deploy Frankfurt (sync.sh --deploy-only), Chicago follow --force; page relaunch
+- [x] Frankfurt fa80a76 via sync.sh --deploy-only (live lockdown 20/20, packet path 5 pages + 25 MB); Chicago follow --force (20/20); page relaunched (uptime per exit, just-blocked in device sheets)
   - 2026-10-19: the watch timer landed on Chicago before its checkout moved to round 6, so kestrel-watch failed (203/EXEC, no watch.sh in ~/kestrel-exit). Only watch.sh from 831bfce is staged there now (runs: Frankfurt direct ok); the rest of round 6 (pull-devices allow-sync) waits for this deploy. 831bfce isn't on GitHub, so follow.sh can't check it out from origin
-- [ ] Live: lockdown both, vpn-path, live-exits-test 30x (failover < 5 s target), conn-rate-test
+- [x] live-exits-test 30x (15 from each exit): 30/30, moved in 4-9 s (mostly 5; was 11-14); no client left
+- [x] Learnt exit list: a one-exit device moves to the faster exit 2 s after its report, no reconnect; control (a05a98a) fails
+- [x] allow-live-test: allow via Chicago reaches Frankfurt for that device only, undo via Frankfurt reaches Chicago (9/9)
+- [x] Found and fixed: test clients started inside $(...) leaked (disguise-test, watch.sh every 5 min!); probe's fixed PAC port kept a second client from starting
+- [x] Apple CI: engine page test failed once (no response from speed.cloudflare.com), passed on rerun; old-client test: app removed the stand-in (control clean), script bug with bash -e fixed
 - [ ] Apple CI on hold: green, screenshots reviewed; then release (remove HOLD)
 - [ ] A day with no plain/classical device: revoke "macbook", kestrel_allow_plain: false, kestrel_require_pq: true
