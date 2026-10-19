@@ -61,6 +61,7 @@ final class SnapshotTests: XCTestCase {
         try render(GeneralSettings().environmentObject(model(.connected)).frame(width: 500), "settings-general")
         try render(WiFiSettings().environmentObject(model(.connected)).frame(width: 500), "settings-wifi")
         try render(ThisMacSettings().environmentObject(model(.connected)).frame(width: 500), "settings-this-mac")
+        try render(JustBlockedView().environmentObject(model(.connected)).frame(width: 460, height: 480), "just-blocked")
         try render(HStack(spacing: 24) {
             Image(nsImage: MenuBarIcon.image(on: true)).renderingMode(.template).foregroundStyle(.primary)
             Image(nsImage: MenuBarIcon.image(on: false)).renderingMode(.template).foregroundStyle(.primary)
