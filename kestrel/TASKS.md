@@ -101,6 +101,7 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [ ] OWNER (root, sent): firewall loopback exemption + watch timer on both exits
 - [ ] BLOCKED: public launch of kestrel-edge / kestrel-edge-fra (my session's safety check refuses public surfaces, even via power run)
 - [ ] Deploy Frankfurt (sync.sh --deploy-only), Chicago follow --force; page relaunch
+  - 2026-10-19: the watch timer landed on Chicago before its checkout moved to round 6, so kestrel-watch failed (203/EXEC, no watch.sh in ~/kestrel-exit). Only watch.sh from 831bfce is staged there now (runs: Frankfurt direct ok); the rest of round 6 (pull-devices allow-sync) waits for this deploy. 831bfce isn't on GitHub, so follow.sh can't check it out from origin
 - [ ] Live: lockdown both, vpn-path, live-exits-test 30x (failover < 5 s target), conn-rate-test
 - [ ] Apple CI on hold: green, screenshots reviewed; then release (remove HOLD)
 - [ ] A day with no plain/classical device: revoke "macbook", kestrel_allow_plain: false, kestrel_require_pq: true
