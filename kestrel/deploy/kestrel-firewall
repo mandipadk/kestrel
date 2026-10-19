@@ -4,7 +4,8 @@
 #   kestrel-firewall check   exit 0 only if every rule is in place
 #
 # Inbound: Oracle's default policy already rejects everything but SSH; this adds
-# only the exit's TCP port, with per-source connection rate and count limits.
+# only the exit's TCP port, with per-source connection rate and count limits
+# (loopback exempt).
 # Outbound for the exit's user: no mail ports, no private, link-local or cloud
 # metadata addresses, and nothing on loopback but the local DNS resolver (the
 # Chicago server runs the owner's own services on localhost).
@@ -15,6 +16,9 @@ IPT=iptables
 IP6T=ip6tables
 
 rules_in=(
+  # this host's own connections (the disguised address's edge, the tests) are
+  # not visitors: the edge limits each visitor by their real address itself
+  "-i lo -j ACCEPT"
   "-p tcp --dport $PORT -m hashlimit --hashlimit-above 20/minute --hashlimit-burst 40 --hashlimit-mode srcip --hashlimit-name kestrel_new -j DROP"
   "-p tcp --dport $PORT -m connlimit --connlimit-above 64 --connlimit-mask 32 -j REJECT --reject-with tcp-reset"
   "-p tcp --dport $PORT -j ACCEPT"

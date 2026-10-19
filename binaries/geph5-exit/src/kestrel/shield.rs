@@ -418,7 +418,8 @@ fn summaries_at(now_hour: u64) -> BTreeMap<String, Summary> {
             let recent: Vec<&Hour> = dev
                 .hours
                 .iter()
-                .filter(|h| h.hour + HOURS_KEPT as u64 > now_hour)
+                // hours ahead of now (the clock stepped back) wait until they come round
+                .filter(|h| h.hour + HOURS_KEPT as u64 > now_hour && h.hour <= now_hour)
                 .collect();
             let mut hourly = vec![0u64; HOURS_KEPT];
             for h in &recent {
@@ -757,5 +758,14 @@ mod tests {
         for bad in ["", "localhost", "a..b", "x.com/evil", "x.com\nevil.com", "-", "a_b.com"] {
             assert!(valid_domain(bad).is_none(), "{bad:?} was accepted");
         }
+    }
+
+    #[test]
+    fn a_clock_that_steps_back_does_not_break_the_summary() {
+        let base = 2_000_000;
+        record_at("t-clock", Some("a.example"), base + 3);
+        record_at("t-clock", Some("a.example"), base);
+        let s = &summaries_at(base)["t-clock"];
+        assert_eq!(s.hourly[23], 1);
     }
 }

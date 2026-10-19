@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import time
 
 STATE = "/var/lib/kestrel"
 
@@ -59,6 +60,35 @@ def list_info():
         return None
 
 
+def watch():
+    """What this exit saw of the other one (watch.sh): last check, uptime over
+    24 hours and 30 days, and a day-by-day strip (oldest first)."""
+    rows = []
+    try:
+        with open(f"{STATE}/reports/watch.jsonl") as f:
+            rows = [json.loads(l) for l in f if l.strip()]
+    except Exception:
+        return {}
+    now = int(time.time())
+    out = {}
+    for target in sorted({r["target"] for r in rows}):
+        mine = [r for r in rows if r["target"] == target]
+        up = lambda r: bool(r.get("direct") or r.get("disguised"))
+        share = lambda rs: round(sum(map(up, rs)) / len(rs), 4) if rs else None
+        days = []
+        for back in range(29, -1, -1):
+            lo, hi = now - (back + 1) * 86400, now - back * 86400
+            day = [r for r in mine if lo <= r["at"] < hi]
+            days.append({"checks": len(day), "up": sum(map(up, day))})
+        out[target] = {
+            "last": mine[-1],
+            "up24h": share([r for r in mine if r["at"] >= now - 86400]),
+            "up30d": share(mine),
+            "days": days,
+        }
+    return out
+
+
 status = load(f"{STATE}/status.json", {}) or {}
 # keys replaced by a rotation stay in the file (so their use can be spotted)
 # but are not devices of their own
@@ -81,7 +111,7 @@ out = {
     "shieldList": list_info(),
     "timers": {
         t: unit(t, "ActiveState", "NextElapseUSecRealtime", "LastTriggerUSec")
-        for t in ("geph-upstream-sync.timer", "geph-security-review.timer", "kestrel-follow.timer", "kestrel-devices.timer")
+        for t in ("geph-upstream-sync.timer", "geph-security-review.timer", "kestrel-follow.timer", "kestrel-devices.timer", "kestrel-watch.timer")
     },
     # the second exit: following Frankfurt's release
     "follow": load(f"{STATE}/reports/latest-follow.json"),
@@ -90,5 +120,8 @@ out = {
     "release": run("readlink", "/opt/kestrel/current").strip().rsplit("/", 1)[-1],
     "lastGood": run("readlink", "/opt/kestrel/last-good").strip().rsplit("/", 1)[-1],
     "pubkey": run("/opt/kestrel/current/kestrelctl", "pubkey").strip(),
+    "watch": watch(),
+    # each exit's disguised address host (the path stays private)
+    "disguise": {e["city"]: e["disguise"].split("/")[2] for e in (load(f"{STATE}/exits.json", []) or []) if e.get("disguise")},
 }
 print(json.dumps(out))

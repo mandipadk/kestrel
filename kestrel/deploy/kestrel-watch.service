@@ -1,0 +1,10 @@
+[Unit]
+Description=Kestrel: check the other exit the way a device uses it
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+# @K@: the kestrel/ folder of this server's checkout (set by the installer)
+ExecStart=@K@/watch.sh
+TimeoutStartSec=150
