@@ -7,6 +7,8 @@
 #  4. any fixes go through sync.sh --deploy-only (build, test, deploy or roll back)
 #  5. a report for the status page and a note to the owner
 set -uo pipefail
+# cargo and osv-scanner live in ~/.cargo/bin and ~/.local/bin: a run by hand must find them too
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
 K=$REPO/kestrel
@@ -26,17 +28,23 @@ cargo audit --json > "$OUT/cargo-audit.json" 2>/dev/null
 vulns=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); v=d.get("vulnerabilities",{}).get("list",[]); print(len(v)); [print("   ", x["advisory"]["id"], x["package"]["name"], x["package"]["version"], "-", x["advisory"]["title"]) for x in v]' "$OUT/cargo-audit.json" 2>/dev/null || echo "?")
 echo "$vulns"
 n_audit=$(head -1 <<<"$vulns")
-[[ "$n_audit" == "0" ]] || note "cargo audit: $n_audit advisories"
 
 echo "== CVE check (OSV)"
 if command -v osv-scanner >/dev/null; then
   osv-scanner scan source --lockfile Cargo.lock --format json > "$OUT/osv.json" 2>/dev/null
   n_osv=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(sum(len(p.get("vulnerabilities",[])) for r in d.get("results",[]) for p in r.get("packages",[])))' "$OUT/osv.json" 2>/dev/null || echo "?")
   echo "  OSV vulnerabilities: $n_osv"
-  [[ "$n_osv" == "0" ]] || note "OSV: $n_osv known vulnerabilities in Cargo.lock"
 else
   note "osv-scanner is not installed; CVE check skipped"
 fi
+
+# only advisories nobody has looked at need the owner's agent; accepted ones
+# (kestrel/advisories-accepted.txt, each with its reason) are listed, not raised
+echo "== advisories: new and accepted"
+triage=$(python3 "$K/advisories.py" "$OUT/cargo-audit.json" "$([[ -s $OUT/osv.json ]] && echo "$OUT/osv.json" || echo -)" "$K/advisories-accepted.txt")
+echo "$triage" | tee "$OUT/advisories.txt"
+n_new=$(tail -1 <<<"$triage" | sed -n 's/^new=\([0-9]*\).*/\1/p')
+[[ "$n_new" == "0" ]] || note "${n_new:-?} new advisories (cargo audit $n_audit, OSV ${n_osv:-?} in all): $(grep -m3 NEW "$OUT/advisories.txt" | sed 's/^ *NEW *//' | cut -c1-60 | tr '\n' ';')"
 
 echo "== firewall"
 sudo -n /usr/local/sbin/kestrel-firewall check > "$OUT/firewall.txt" 2>&1 || note "firewall check failed: $(grep missing "$OUT/firewall.txt" | head -3 | tr '\n' ';')"
