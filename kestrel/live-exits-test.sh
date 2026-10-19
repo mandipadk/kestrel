@@ -143,5 +143,69 @@ if [[ $FIRST == Chicago || $FIRST == Frankfurt ]]; then
   ip=$(works "$AUTO") && ok "still working once $FIRST is back ($ip)" || bad "not working once $FIRST is back"
 fi
 
+# A device set up when it knew only one exit (the apps' first connection) asks
+# for its report through the engine's control method, as the apps do, learns
+# the owner's exit list, and moves to the faster exit without reconnecting.
+# Its known exit is reached through a relay that waits 1.5 s per connection,
+# so the other exit, learnt from the report, is the faster one.
+# LEARN_CLIENT: another engine build (a control run with an older one must fail).
+SLOW=$(free_port)
+python3 - "$SLOW" 127.0.0.1:443 > /dev/null 2>&1 <<'PY' &
+import socket, sys, threading, time
+lp = int(sys.argv[1]); host, port = sys.argv[2].rsplit(":", 1)
+srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", lp)); srv.listen(64)
+def pump(a, b):
+    try:
+        while (d := a.recv(65536)):
+            b.sendall(d)
+    except OSError:
+        pass
+    for s in (a, b):
+        try: s.shutdown(socket.SHUT_RDWR)
+        except OSError: pass
+def handle(c):
+    time.sleep(1.5)
+    u = socket.create_connection((host, int(port)))
+    threading.Thread(target=pump, args=(c, u), daemon=True).start()
+    pump(u, c)
+while True:
+    c, _ = srv.accept()
+    threading.Thread(target=handle, args=(c,), daemon=True).start()
+PY
+PIDS+=($!)
+OTHER=$([[ $HERE == Chicago ]] && echo Frankfurt || echo Chicago)
+LPORT=$(free_port); LCTL=$(free_port)
+python3 - "$PROBE" "$EXITS" "$HERE" "$SLOW" "$LPORT" "$LCTL" > "$WORK/learn.yaml" <<'PY'
+import json, sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+here = dict(next(x for x in json.load(open(sys.argv[2])) if x["city"] == sys.argv[3]))
+here["endpoint"] = f"127.0.0.1:{sys.argv[4]}"
+cfg["kestrel_device"]["exits"] = [here]
+cfg["kestrel_device"]["exit_choice"] = None
+cfg["socks5_listen"] = f"127.0.0.1:{sys.argv[5]}"
+cfg["control_listen"] = f"127.0.0.1:{sys.argv[6]}"
+cfg["http_proxy_listen"] = None
+cfg["pac_listen"] = None
+cfg["allow_lan"] = False
+print(yaml.safe_dump(cfg))
+PY
+"${LEARN_CLIENT:-$CLIENT}" --config "$WORK/learn.yaml" > "$WORK/learn.log" 2>&1 &
+echo $! >> "$WORK/pids"
+ip=$(works "$LPORT") && [[ $ip == "ip=${IP[$HERE]}" ]] && ok "a device that knows only $HERE uses it ($ip)" || bad "the one-exit device: '${ip:-nothing}'"
+rpc() { python3 -c '
+import json, socket, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=20)
+s.sendall((json.dumps({"jsonrpc": "2.0", "method": "kestrel_exit", "params": [sys.argv[2]], "id": 1}) + "\n").encode())
+print(s.makefile().readline().strip())' "$1" "$2" 2>/dev/null; }
+rpc "$LCTL" status > /dev/null
+t0=$(date +%s); moved=""
+while (( $(date +%s) - t0 < 30 )); do
+  [[ $(city "$LPORT") == "$OTHER" ]] && { moved=$(( $(date +%s) - t0 )); break; }
+  sleep 1
+done
+[[ -n $moved ]] && ok "after its report it learnt $OTHER and moved there in ${moved}s, no reconnect" || bad "it did not move to $OTHER after learning the exit list"
+ip=$(works "$LPORT") && [[ $ip == "ip=${IP[$OTHER]}" ]] && ok "pages now leave from $OTHER ($ip)" || bad "pages after learning: '${ip:-nothing}'"
+
 echo "live-exits: $PASS passed, $FAIL failed"
 [[ $FAIL == 0 ]]
