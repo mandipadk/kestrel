@@ -70,6 +70,6 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] live-exits-test leaked its clients (started inside $(...)); fixed, checked after every run
 - [x] kestrelctl's new default exit list made the local lockdown test refuse its throwaway exit (would have failed the 04:35 sync); the test now points it elsewhere
 - [x] 30 live failover runs on e9b655f, 15 from each exit: 30/30 passed (12 checks each); the device moved in 11-14 s, 4 runs ~22 s; no client left behind; no block of our own addresses
-- [ ] Lift apps/HOLD (TestFlight + mac-latest)
+- [x] Released: apps/HOLD removed; CI run 39 (Mac 1.3 build 39 on mac-latest, signed appcast, update test 1.2 -> 1.3; iPhone 1.2 uploaded to TestFlight). Frankfurt's 04:45 sync rebased on upstream 02b7831 and deployed 1b99bda (all gates passed)
 - [ ] Failover is 11-14 s, not the planned 10 s (the open-response timeout is 10 s); a faster dead-session check would cut it
 - [ ] kestrel_require_pq once every device reports quantum-safe
