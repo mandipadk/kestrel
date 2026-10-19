@@ -272,7 +272,7 @@ fn note_recent(device: &str, domain: &str, at: u64) {
     recent.truncate(RECENT_KEPT);
 }
 
-fn recent(device: &str) -> Vec<Recent> {
+fn recent_for(device: &str) -> Vec<Recent> {
     RECENT
         .get(device)
         .map(|r| r.iter().cloned().collect())
@@ -402,7 +402,7 @@ pub fn summary(device: &str) -> Summary {
         enabled: switched_on(device),
         paused_until: paused_until(device),
         hourly: vec![0; HOURS_KEPT],
-        recent: recent(device),
+        recent: recent_for(device),
         allowed: device_allowed(device),
         allowed_everywhere: allowed_everywhere(),
         ..Default::default()
@@ -443,7 +443,7 @@ fn summaries_at(now_hour: u64) -> BTreeMap<String, Summary> {
                 blocked_total: dev.blocked_total,
                 hourly,
                 top,
-                recent: recent(name),
+                recent: recent_for(name),
                 allowed: device_allowed(name),
                 allowed_everywhere: everywhere.clone(),
             };
