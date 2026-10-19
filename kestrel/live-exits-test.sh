@@ -23,9 +23,11 @@ EXITS=/var/lib/kestrel/exits.json
 WORK=$(mktemp -d /tmp/kestrel-live-exits.XXXXXX)
 PIDS=()
 cleanup() {
-  for p in "${PIDS[@]}"; do kill -CONT "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
+  # clients start inside $(...), so their pids are kept in a file, not in PIDS
+  for p in "${PIDS[@]}" $(cat "$WORK/pids" 2>/dev/null); do kill -CONT "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
   wait 2>/dev/null
-  [[ -n ${KEEP:-} ]] && echo "kept $WORK" || rm -rf "$WORK"
+  # a failed run keeps its client logs
+  [[ -n ${KEEP:-} || $FAIL != 0 ]] && echo "kept $WORK" || rm -rf "$WORK"
 }
 trap cleanup EXIT
 
@@ -81,9 +83,13 @@ cfg["allow_lan"] = False
 print(yaml.safe_dump(cfg))
 PY
   "$CLIENT" --config "$WORK/$1.yaml" > "$WORK/$1.log" 2>&1 &
-  PIDS+=($!)
+  echo $! >> "$WORK/pids"
   echo "$port"
 }
+
+# done_with_last: stop the newest client (one device opens up to ~7 connections a
+# minute; several copies at once would run into the exits' 20/min-per-address limit)
+done_with_last() { local p; p=$(tail -1 "$WORK/pids"); kill -CONT "$p" 2>/dev/null; kill "$p" 2>/dev/null; }
 
 works() { # works <socks-port> -> prints the exit ip, fails if pages don't load
   local out
@@ -117,6 +123,7 @@ for X in Chicago Frankfurt; do
   P=$(client "pin-$X" "$X")
   ip=$(works "$P") && [[ $ip == "ip=${IP[$X]}" ]] && ok "pinned to $X, pages leave from $X ($ip)" || bad "pinned to $X, got '${ip:-nothing}'"
   [[ $(city "$P") == "$X" ]] && ok "the $X pin is honoured" || bad "the $X pin is not honoured"
+  done_with_last
 done
 
 if [[ $FIRST == Chicago || $FIRST == Frankfurt ]]; then
@@ -131,6 +138,7 @@ if [[ $FIRST == Chicago || $FIRST == Frankfurt ]]; then
   PIN=$(client "pin-down" "$FIRST")
   if through "$PIN" https://1.1.1.1/cdn-cgi/trace 15 >/dev/null 2>&1; then bad "a device pinned to the cut-off $FIRST got through"
   else ok "a device pinned to the cut-off $FIRST does not use $OTHER"; fi
+  done_with_last
   kill -CONT "${RPID[$FIRST]}"
   ip=$(works "$AUTO") && ok "still working once $FIRST is back ($ip)" || bad "not working once $FIRST is back"
 fi
