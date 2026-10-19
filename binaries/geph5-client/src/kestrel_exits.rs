@@ -8,9 +8,17 @@
 //! the old exit then close, so new connections all move together.
 //!
 //! A pinned exit (`exit_choice`) is the only one used, with no failover.
+//!
+//! Exits tell a device the owner's exit list in its report. The engine takes
+//! it at once (no reconnect, no saved settings): new exits are appended, so
+//! the indexes sessions carry stay valid, and an automatic device races them
+//! once to move to whichever is faster.
 
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -30,20 +38,43 @@ use crate::{
 
 const NONE: usize = usize::MAX;
 /// How long the active exit gets before the others race it.
-const HEAD_START: Duration = Duration::from_secs(3);
+const HEAD_START: Duration = Duration::from_millis(1500);
+/// How long a session's exit may take to answer a ping (sent with every new
+/// connection) before the session counts as dead and the device fails over.
+pub const PING_TIMEOUT: Duration = Duration::from_secs(3);
 /// The most one attempt (dial and handshake) at one exit may take.
 const ATTEMPT: Duration = Duration::from_secs(10);
 
 static ACTIVE: CtxField<AtomicUsize> = |_| AtomicUsize::new(NONE);
 
+/// The exit list learnt from the exits' reports (empty until one arrives).
+static LEARNT: CtxField<RwLock<Vec<KestrelExit>>> = |_| RwLock::new(Vec::new());
+
+/// This device's exits: what it was configured with, plus any learnt since.
+fn exit_list(ctx: &AnyCtx<Config>) -> Vec<KestrelExit> {
+    let learnt = ctx.get(LEARNT).read().unwrap();
+    if !learnt.is_empty() {
+        return learnt.clone();
+    }
+    ctx.init()
+        .kestrel_device
+        .as_ref()
+        .map(|d| d.exits.clone())
+        .unwrap_or_default()
+}
+
 /// The exits this device may use, with their index in its exit list. None
 /// when it has no exit list (it then uses `exit_constraint`, as before).
 pub fn candidates(ctx: &AnyCtx<Config>) -> Option<Vec<(usize, KestrelExit)>> {
     let device = ctx.init().kestrel_device.as_ref()?;
-    if device.exits.is_empty() || ctx.init().broker.is_some() {
+    if ctx.init().broker.is_some() {
         return None;
     }
-    let all: Vec<(usize, KestrelExit)> = device.exits.iter().cloned().enumerate().collect();
+    let list = exit_list(ctx);
+    if list.is_empty() {
+        return None;
+    }
+    let all: Vec<(usize, KestrelExit)> = list.into_iter().enumerate().collect();
     let pinned: Vec<(usize, KestrelExit)> = match &device.exit_choice {
         Some(city) => all
             .iter()
@@ -54,6 +85,85 @@ pub fn candidates(ctx: &AnyCtx<Config>) -> Option<Vec<(usize, KestrelExit)>> {
     };
     // a pin to a city this device doesn't know means automatic
     Some(if pinned.is_empty() { all } else { pinned })
+}
+
+/// Whether an exit list entry is well formed: "host:port", a 32-byte key in
+/// hex and a short city name.
+fn well_formed(e: &KestrelExit) -> bool {
+    e.endpoint.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && p.parse::<u16>().is_ok())
+        && e.pubkey.len() == 64
+        && e.pubkey.chars().all(|c| c.is_ascii_hexdigit())
+        && !e.city.is_empty()
+        && e.city.len() <= 40
+}
+
+/// The configured or learnt list with `told`'s new exits appended (by key), or
+/// None if `told` adds nothing.
+fn merged(current: &[KestrelExit], told: &[KestrelExit]) -> Option<Vec<KestrelExit>> {
+    let mut next = current.to_vec();
+    for e in told.iter().filter(|e| well_formed(e)) {
+        if !next.iter().any(|c| c.pubkey.eq_ignore_ascii_case(&e.pubkey)) {
+            next.push(e.clone());
+        }
+    }
+    (next.len() > current.len()).then_some(next)
+}
+
+/// Takes the exit list an exit reported (it came through our own tunnel, so it
+/// is ours). A device that had no list moves its sessions onto the list; an
+/// automatic device races the exits once and moves if another is faster.
+pub fn learn(ctx: &AnyCtx<Config>, told: &serde_json::Value) {
+    if ctx.init().kestrel_device.is_none() || ctx.init().broker.is_some() {
+        return;
+    }
+    let Ok(told) = serde_json::from_value::<Vec<KestrelExit>>(told.clone()) else {
+        return;
+    };
+    let current = exit_list(ctx);
+    let Some(next) = merged(&current, &told) else {
+        return;
+    };
+    tracing::info!(
+        exits = debug(next.iter().map(|e| e.city.as_str()).collect::<Vec<_>>()),
+        "learnt the owner's exits"
+    );
+    *ctx.get(LEARNT).write().unwrap() = next;
+    if current.is_empty() {
+        // sessions from before had no exit list: start over on it
+        crate::session::close_sessions_without_exit(ctx);
+    } else {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            if let Err(err) = reconsider(&ctx).await {
+                tracing::debug!(err = debug(err), "could not compare the exits");
+            }
+        });
+    }
+}
+
+/// Races every exit (automatic mode) and moves to the winner if it isn't the
+/// exit in use.
+async fn reconsider(ctx: &AnyCtx<Config>) -> anyhow::Result<()> {
+    let exits = candidates(ctx).context("no exits")?;
+    if exits.len() < 2 {
+        return Ok(());
+    }
+    let mut racing: FuturesUnordered<_> =
+        exits.into_iter().map(|(i, e)| attempt(ctx, i, e)).collect();
+    let mut winner = None;
+    while let Some(r) = racing.next().await {
+        if let Ok((_, descriptor, idx)) = r {
+            winner = Some((idx, descriptor.city));
+            break;
+        }
+    }
+    let (idx, city) = winner.context("no exit answered")?;
+    let slot = ctx.get(ACTIVE);
+    let now = slot.load(Ordering::SeqCst);
+    if now != NONE && now != idx && slot.compare_exchange(now, idx, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        tracing::info!(exit = city.as_str(), "moving to the faster exit");
+    }
+    Ok(())
 }
 
 /// The index of the exit in use, if one has been chosen.
@@ -146,4 +256,42 @@ pub async fn connect(
         Err(_) => anyhow::bail!("another session moved to a different exit"),
     }
     Ok(won)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exit(city: &str, key: char) -> KestrelExit {
+        KestrelExit {
+            endpoint: format!("{}.example:443", city.to_lowercase()),
+            pubkey: key.to_string().repeat(64),
+            city: city.into(),
+        }
+    }
+
+    #[test]
+    fn learnt_exits_are_appended_so_indexes_stay_put() {
+        let frankfurt = exit("Frankfurt", 'a');
+        let chicago = exit("Chicago", 'b');
+        let next = merged(&[frankfurt.clone()], &[chicago.clone(), frankfurt.clone()]).unwrap();
+        assert_eq!(next, [frankfurt.clone(), chicago.clone()]);
+        // nothing new: nothing to do
+        assert!(merged(&next, &[chicago.clone()]).is_none());
+        // a device with no list takes the whole list
+        assert_eq!(merged(&[], &[chicago.clone()]).unwrap(), [chicago]);
+    }
+
+    #[test]
+    fn malformed_exits_are_ignored() {
+        let mut bad_key = exit("Chicago", 'b');
+        bad_key.pubkey = "zz".repeat(32);
+        let mut no_port = exit("Chicago", 'c');
+        no_port.endpoint = "chicago.example".into();
+        let mut short_key = exit("Chicago", 'd');
+        short_key.pubkey = "ab".into();
+        let mut no_city = exit("", 'e');
+        no_city.city.clear();
+        assert!(merged(&[exit("Frankfurt", 'a')], &[bad_key, no_port, short_key, no_city]).is_none());
+    }
 }
