@@ -36,6 +36,7 @@ fn is_ipv4_globally_routable(ip: &std::net::Ipv4Addr) -> bool {
         && !ip.is_loopback()
         && !ip.is_link_local()
         && !ip.is_broadcast()
+        && !ip.is_multicast()
         && !ip.is_documentation()
         && !ip.is_unspecified()
         && !is_ipv4_shared_address(ip)
@@ -97,6 +98,16 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn multicast_is_blocked() {
+        for ip in ["224.0.0.251", "239.255.255.250", "::ffff:224.0.0.1", "ff02::1"] {
+            for protocol in ["tcp", "udp"] {
+                let addr = SocketAddr::new(ip.parse().unwrap(), 5353);
+                assert!(!proxy_allowed(addr, false, protocol), "allowed {addr} over {protocol}");
             }
         }
     }
