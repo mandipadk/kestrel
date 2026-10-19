@@ -56,7 +56,7 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] EngineTests.testAPageLoadsInPacketsThatFitTheTunnel: 20 kB over TCP through the engine, every packet <= 1450. Control run 39161619655 (test without fix): Mac failed with an 8232-byte packet
 - [x] kestrel/vpn-path-test.py: the apps' packet path on Linux (TUN in a netns): 5 real pages, 25 MB download, MTU check; sync.sh runs it on the live exit before keeping a deploy (rollback otherwise)
 
-## Round 5 (2026-10-19): a second exit, and a quantum-safe tunnel (plan: kestrel/PLAN.md)
+## Round 5 (2026-10-19): a second exit, and a quantum-safe tunnel (plan: kestrel/PLAN-round5.md)
 - [x] Quantum-safe handshake: X25519 + ML-KEM-768 hello, both sides sign; client refuses a classical answer to a PQ hello; `kestrel_require_pq` (off until every device is quantum-safe); old apps keep working (tested)
 - [x] Engine: exit list, automatic race (active exit gets a 3 s head start), failover, pins; exits learnt from the report
 - [x] Apps: Exit choice (Automatic, Chicago, Frankfurt), current exit, quantum-safe in the link line; CI engine tests with both exits
@@ -85,3 +85,13 @@ Suggested, not built: second exit in Chicago (needs root there + an Oracle port)
 - [x] The review's dependency step bumped sqlx (accepted advisory), which only reshuffled socket2/windows-sys (went out in app build 41): reverted; the step now bumps only crates with new advisories
 - [x] Frankfurt on a05a98a (44/44 local, 20/20 live, page path ok); Chicago follows at its 05:40 run
 - [ ] Owner's call: kestrel_allow_plain: false once every device is on the stealth link (the device "macbook" was last seen on the plain link)
+
+## Round 6 (proposed 2026-10-19, waiting for the owner): plan in kestrel/PLAN.md
+Found on the live exits: Chicago has never carried an owner device (learnt exit lists wait for the tunnel to go off); the round-1 Mac command-line client ("macbook", plain, classical, no Shield) still runs and likely holds the Mac's proxies; iPhone not seen since before 1.2.
+- [ ] Mac 1.4: replace the old command-line client from the panel (agent, files, proxies); CI test with the old client installed first
+- [ ] Apps: a learnt exit list reaches the running engine; engine test + control
+- [ ] Failover ~3 s (session keepalive); live-exits-test 30x under 5 s
+- [ ] Exit watch: each exit checks the other every 5 min; uptime on the page; reports to this work
+- [ ] Shield "Just blocked" with Allow from the device (exit ring buffer, apps, page)
+- [ ] Disguised link: WebSocket over HTTPS via Cloudflare to Chicago's exit (needs OWNER OK for a public address); hostile-network netns test + control
+- [ ] A day with no plain/classical device: revoke "macbook", kestrel_allow_plain: false, kestrel_require_pq: true
