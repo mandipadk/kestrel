@@ -73,6 +73,29 @@ No Geph broker, no Geph account, no paid plan.
   both hellos are signed so the KEM can't be stripped. Old apps still use the classical handshake
   until `kestrel_require_pq: true`.
 
+- **Disguised link.** For networks that block the exits' addresses or random-looking traffic, each
+  exit can have a disguised address: a WebSocket over HTTPS on the owner's Cloudflare zone
+  (`kestrel/edge`, run with `launch --public` on each server). Devices carry the same stealth link
+  and handshake inside it, so the edge and Cloudflare only see ciphertext and the exit still checks
+  the key. The edge answers 404 to anything but its secret path (`~/.config/kestrel/edge-path`),
+  connects only to its own exit on 127.0.0.1:443, and limits each visitor by their real address.
+  Automatic devices try direct first and add the disguise after 4 s (at once if it worked last);
+  "Always disguise" in the apps uses it from the start. The address is in each exit's
+  `/var/lib/kestrel/exits.json` (`disguise`), so devices learn it from their report.
+  `disguise-test.sh` blackholes the exit's address and proves pages still load; an engine from
+  before the disguise fails it (control).
+- **Just blocked.** Each exit remembers the last 50 domains Shield blocked per device (in memory).
+  The apps list them and allow one for this device or for every device; the page's device sheet
+  shows them too. Allow lists merge both ways between the exits (`allow-sync.py`).
+- **Exit list without a reconnect, faster failover.** Engines take the exit list from the report at
+  once and race to the faster exit; a session whose exit misses a ping for 3 s is dropped, so a
+  device leaves a dead exit in seconds.
+- **Exit watch.** Every 5 minutes each exit checks the other with a real device handshake and a page
+  load, directly and disguised (`watch.sh`, `kestrel-watch.timer`). The page shows 30 days of it;
+  ten minutes without an answer is reported to the agent on this work.
+- **The old Mac client.** Mac 1.4 finds the round-1 command-line client (its LaunchAgent and the
+  proxies it set) and removes it with one click; CI installs a stand-in and checks nothing is left.
+
 ## Pieces
 
 | Path | What |
@@ -87,7 +110,11 @@ No Geph broker, no Geph account, no paid plan.
 | `binaries/geph5-exit/src/kestrel/shield.rs` | Shield: lists, NXDOMAIN answers, per-device counts |
 | `binaries/geph5-exit/src/kestrel/stealth.rs` | stealth and plain links on one port |
 | `apps/ios`, `apps/mac`, `apps/shared` | the iPhone and Mac apps |
-| `apps/mac-cli` | the old command-line Mac client (replaced by the app) |
+| `apps/mac-cli` | the old command-line Mac client (replaced by the app, which removes it) |
+| `binaries/geph5-client/src/kestrel_disguise.rs` | the disguised link (WebSocket over HTTPS) |
+| `kestrel/edge` | the disguised address's server end |
+| `kestrel/watch.sh` | each exit checks the other every 5 minutes |
+| `kestrel/allow-sync.py` | Shield allow lists, merged both ways between the exits |
 
 ## On the server
 
