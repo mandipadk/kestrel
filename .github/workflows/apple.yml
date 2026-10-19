@@ -267,15 +267,17 @@ jobs:
           # (an administrator prompt would hang here: give up after 2 minutes)
           rc=0
           perl -e 'alarm 120; exec @ARGV' /Applications/Kestrel.app/Contents/MacOS/Kestrel --remove-old-client || { echo "::error::the app did not remove the old client"; rc=1; }
-          launchctl print "gui/$(id -u)/dev.mandip.kestrel" >/dev/null 2>&1 && { echo "::error::the old agent still runs"; rc=1; }
+          # (if, not &&: a false test at the end of a loop would stop this bash -e step)
+          if launchctl print "gui/$(id -u)/dev.mandip.kestrel" >/dev/null 2>&1; then echo "::error::the old agent still runs"; rc=1; fi
           for f in ~/.kestrel ~/.local/bin/kestrel ~/Library/LaunchAgents/dev.mandip.kestrel.plist; do
-            [[ -e $f ]] && { echo "::error::$f is still there"; rc=1; }
+            if [[ -e $f ]]; then echo "::error::$f is still there"; rc=1; fi
           done
           left=$(networksetup -listallnetworkservices | tail -n +2 | grep -v '^\*' | while read -r svc; do
             for k in -getsocksfirewallproxy -getwebproxy -getsecurewebproxy; do
-              networksetup $k "$svc" | grep -q '^Enabled: Yes' && echo "$svc $k"
+              if networksetup $k "$svc" | grep -q '^Enabled: Yes'; then echo "$svc $k"; fi
             done
           done)
+          echo "left on: ${left:-none}"
           [[ -z $left ]] || { echo "::error::proxies still on: $left"; rc=1; }
           curl -sS --max-time 15 -o /dev/null -w 'page after removal: %{http_code}\n' https://example.com/ || rc=1
           exit $rc
