@@ -25,5 +25,6 @@ final class ScreenTests: XCTestCase {
         shoot("home-off", ["-KestrelSample", "off"])
         shoot("welcome", ["-KestrelSample", "welcome"])
         shoot("settings", ["-KestrelSample", "connected", "-KestrelShowSettings"])
+        shoot("just-blocked", ["-KestrelSample", "connected", "-KestrelShowBlocked"])
     }
 }

@@ -296,7 +296,7 @@ enum Sample {
     static let deviceName = "macbook"
     #endif
     static let device = DeviceKey(n: deviceName, s: String(repeating: "0", count: 64), e: "203.0.113.7:443", k: String(repeating: "1", count: 64))
-    static let exits = [KestrelExit(c: "Chicago", e: "198.51.100.20:443", k: String(repeating: "2", count: 64)),
+    static let exits = [KestrelExit(c: "Chicago", e: "198.51.100.20:443", k: String(repeating: "2", count: 64), d: "wss://edge.example.dev/sample"),
                         KestrelExit(c: "Frankfurt", e: "203.0.113.7:443", k: String(repeating: "1", count: 64))]
 
     /// Plausible numbers for a laptop's day, labelled as samples wherever shown.
@@ -305,6 +305,11 @@ enum Sample {
         shield: .init(on: true, pausedUntil: nil, lookups24h: 9_412, blocked24h: 1_284, blockedTotal: 20_117,
                       hourly: [12, 8, 3, 0, 0, 0, 1, 4, 22, 61, 88, 93, 70, 102, 84, 77, 95, 120, 96, 74, 58, 66, 81, 70],
                       top: [("app-measurement.com", 212), ("browser-intake-datadoghq.com", 164), ("stats.g.doubleclick.net", 139),
-                            ("graph.instagram.com", 97), ("sentry.io", 61)])
+                            ("graph.instagram.com", 97), ("sentry.io", 61)],
+                      recent: [.init(domain: "click.mailchimp.com", count: 2, last: Date().addingTimeInterval(-40)),
+                               .init(domain: "browser-intake-datadoghq.com", count: 14, last: Date().addingTimeInterval(-95)),
+                               .init(domain: "app-measurement.com", count: 31, last: Date().addingTimeInterval(-260)),
+                               .init(domain: "cdn.segment.com", count: 3, last: Date().addingTimeInterval(-900))],
+                      allowed: ["links.shopify.com"])
     )
 }
