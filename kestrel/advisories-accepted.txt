@@ -17,3 +17,6 @@ RUSTSEC-2024-0384 instant 0.1 unmaintained, no known vulnerability; upstream dep
 RUSTSEC-2024-0436 paste 1.0 unmaintained, no known vulnerability; build-time macro
 RUSTSEC-2025-0134 rustls-pemfile 1.0 unmaintained, no known vulnerability; upstream dependency
 RUSTSEC-2024-0449 unsafe-libyaml 0.2 unmaintained, no known vulnerability; reads our own config files only
+# Looked at 2026-10-25: the 0.103 / 1.0 lines (exit and the apps' engine, for the disguised link and the Shield list download) moved to 0.103.16 / 1.0.11; the old lines below are broker only (cargo tree -p geph5-client/-exit finds neither)
+RUSTSEC-2026-0382 rustls-webpki 0.101 only via sqlx-core's Postgres TLS in upstream's geph5-broker (as RUSTSEC-2026-0098)
+RUSTSEC-2026-0381 webpki-roots 0.25 only via sqlx-core in upstream's geph5-broker; not built into the exit, the engine or kestrelctl

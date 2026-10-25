@@ -68,13 +68,20 @@ cat "$OUT/lockdown.txt"
 echo "== dependency fixes"
 BEFORE=$(git rev-parse HEAD)
 # bump crates with new RustSec advisories (not accepted ones: updating those
-# only reshuffles their dependencies) to a patched, semver-compatible version
-grep '^  NEW ' "$OUT/advisories.txt" 2>/dev/null | awk '{print $3}' | sort -u \
-  | while read -r crate; do
-      before=$(sha256sum Cargo.lock)
-      cargo update -q -p "$crate" 2>/dev/null
-      [[ $(sha256sum Cargo.lock) != "$before" ]] && echo "  updated $crate" || echo "  $crate: no compatible fix to take"
-    done
+# only reshuffles their dependencies) to a patched, semver-compatible version.
+# Each is named crate@version (a bare name is refused when two versions are
+# locked), and all go in one cargo update: one at a time, an earlier step's
+# re-lock could move socket2/windows-sys back a version.
+specs=$(grep '^  NEW ' "$OUT/advisories.txt" 2>/dev/null | awk '{sub(":$", "", $4); print $3 "@" $4}' | sort -u)
+if [[ -n "$specs" ]]; then
+  cp Cargo.lock "$OUT/Cargo.lock.before"
+  # shellcheck disable=SC2046
+  cargo update $(printf -- '-p %s ' $specs) > "$OUT/cargo-update.txt" 2>&1 || echo "  cargo update failed: $(tail -2 "$OUT/cargo-update.txt" | tr '\n' ' ')"
+  for spec in $specs; do
+    crate=${spec%@*}
+    grep -qE "Updating $crate v${spec#*@} " "$OUT/cargo-update.txt" && echo "  updated $spec" || echo "  $spec: no compatible fix to take"
+  done
+fi
 if [[ -n $(git status --porcelain Cargo.lock) ]]; then
   git commit -q -m "Update dependencies with security advisories" Cargo.lock
 fi
