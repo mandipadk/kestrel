@@ -95,14 +95,22 @@ pub fn device_of(metadata: &serde_json::Value) -> Option<&str> {
 const INTERNAL_DOMAIN: &str = ".kestrel.internal";
 const PAUSE_SECS: u64 = 3600;
 
+/// The only port the internal names answer on. The engine's `kestrel_exit`
+/// asks on it; browsers refuse port 1, so a web page the device loads
+/// through the system proxy can't pause Shield or allow domains.
+const INTERNAL_PORT: &str = "1";
+
 /// Answers a request to one of the exit's internal names, or None if the
 /// destination is an ordinary one.
 pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
-    let host = dest.rsplit_once(':').map(|(h, _)| h).unwrap_or(dest);
+    let (host, port) = dest.rsplit_once(':').unwrap_or((dest, ""));
     let what = host
         .to_ascii_lowercase()
         .strip_suffix(INTERNAL_DOMAIN)?
         .to_string();
+    if port != INTERNAL_PORT {
+        return Some(br#"{"error":"unknown request"}"#.to_vec());
+    }
     if !apply_request(device, &what) {
         return Some(br#"{"error":"unknown request"}"#.to_vec());
     }
@@ -624,5 +632,19 @@ mod tests {
             assert!(!apply_request("t-req", bad), "{bad:?} was accepted");
         }
         assert!(apply_request("t-req", "status"));
+    }
+
+    #[test]
+    fn internal_names_do_nothing_off_their_port() {
+        for dest in [
+            "shield-pause.kestrel.internal:80",
+            "SHIELD-PAUSE.kestrel.internal:443",
+            "shield-pause.kestrel.internal",
+        ] {
+            let body = internal_request("t-port", dest).expect("an internal name");
+            assert_eq!(body, br#"{"error":"unknown request"}"#, "{dest}");
+        }
+        assert_eq!(shield::summary("t-port").paused_until, 0);
+        assert!(internal_request("t-port", "example.com:1").is_none());
     }
 }
