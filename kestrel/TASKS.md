@@ -120,4 +120,4 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 
 ## Upstream check (2026-10-26, want b0b31e20)
 - [x] Upstream is geph-official/geph5 (remote `upstream`; master 02b7831, 2026-10-18) plus crate ipstack-geph (geph-official/ipstack, 0.3.6 locked = latest). Nothing new. Both exits on 77bb395 (04:46 sync: 42+12+4+34 unit, lockdown 44/44, live 20/20); Frankfurt watch reaches Chicago direct + disguised
-- [ ] kestrel-firewall check as root not run this time: the owner wasn't asked in time (power sudo timed out); power run runs as the owner, not root, so its "missing" lines are not a real result
+- [x] kestrel-firewall check as root (owner allowed): Chicago ok, Frankfurt ok (note: Syncthing *:22000 listens on Frankfurt, behind the default reject). Chicago watch reaches Frankfurt direct 669 ms + disguised 1165 ms
