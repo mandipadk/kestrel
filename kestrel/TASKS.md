@@ -128,4 +128,6 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] Fixed: both public edges ran ws 8.18.3 (GHSA-58qx-3vcg-4xpx, GHSA-96hv-2xvq-fx4p); now 8.22.0 (d4c705f), relaunched on both (owner allowed). Watch both ways after: Chicago->Frankfurt disguised 1515 ms, Frankfurt->Chicago 1198 ms; 404 off the secret path on both
 - [x] Fixed: Apple CI failed since the disguise went live (EngineTests compared exits with their disguise URL); the failure message printed both edges' secret paths into public logs of runs 40169984305 and 40271880608. Test compares without it (165d8e0); goes out with tonight's sync push. Not run here (needs Xcode): check the next apple run
 - [x] Review now scans both exits and npm-audits both edges (d4a6ba2); on today's edges before the fix it raised both, as it should
-- [ ] Owner's call: rotate both edge paths and delete the two runs' logs
+- [x] OWNER chose rotate + delete logs. New edge paths on both (18:05 via edge-enable.sh); old paths 404, new ones upgrade; exits.json on both carry them; watch both ways passes (Frankfurt->Chicago disguised 1131 ms, Chicago->Frankfurt 1211 ms). Logs of runs 40169984305/40271880608 deleted (API 404). Their error annotations still show the old, now dead, paths; removing them means deleting the runs (not done: not what was approved)
+- [x] kestrel-firewall check as root after the edge update: ok on both; both edges npm audit 0
+- [ ] /var/lib/kestrel/exits.json.old on Chicago (holds the old, dead paths) left: this session had no kestrel group there
