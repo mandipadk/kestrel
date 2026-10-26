@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Kestrel weekly security review.
 #  1. cargo audit (RustSec) and an OSV CVE check of Cargo.lock
-#  2. firewall rules, outside port scan from Chicago, and the live lockdown test
+#  2. firewall rules, each exit's ports scanned from the other, the edges'
+#     npm advisories, and the live lockdown test
 #  3. crates with advisories are bumped; Claude Code reviews our diff and the
 #     last week of upstream changes (read and edit only, no shell)
 #  4. any fixes go through sync.sh --deploy-only (build, test, deploy or roll back)
@@ -50,16 +51,43 @@ echo "== firewall"
 sudo -n /usr/local/sbin/kestrel-firewall check > "$OUT/firewall.txt" 2>&1 || note "firewall check failed: $(grep missing "$OUT/firewall.txt" | head -3 | tr '\n' ';')"
 cat "$OUT/firewall.txt"
 
-echo "== outside port scan (from Chicago)"
-scan=$(timeout 120 ssh -o BatchMode=yes chicago "for p in 22 80 111 443 8080 9909 9910 28443 3128 1080; do if timeout 4 bash -c \"</dev/tcp/$PUBLIC_IP/\$p\" 2>/dev/null; then echo open:\$p; else echo closed:\$p; fi; done" 2>/dev/null)
-echo "$scan" | tr '\n' ' '; echo
-if [[ -z "$scan" ]]; then
-  note "could not reach Chicago for the outside scan"
-else
-  unexpected=$(grep '^open:' <<<"$scan" | grep -vE '^open:(22|443)$' | tr '\n' ' ')
-  [[ -z "$unexpected" ]] || note "unexpected open ports seen from outside: $unexpected"
-  grep -q "^open:$PORT$" <<<"$scan" || note "the exit port $PORT is not reachable from outside"
-fi
+# each exit scanned from the other (this runs on Frankfurt). Expected open:
+# SSH and the exit port; on Frankfurt also 22000, the Magpie hub (Syncthing,
+# its own project).
+CHICAGO_IP=${KESTREL_CHICAGO_IP:-64.181.219.94}
+SCAN_PORTS="22 80 111 443 1080 2049 3128 7681 8080 8385 9909 9910 22000 28443"
+probe_ports() { # probe_ports <ip> -> open:<port>/closed:<port> lines
+  for p in $SCAN_PORTS; do
+    if timeout 4 bash -c "</dev/tcp/$1/$p" 2>/dev/null; then echo "open:$p"; else echo "closed:$p"; fi
+  done
+}
+for target in "Frankfurt $PUBLIC_IP 22|$PORT|22000" "Chicago $CHICAGO_IP 22|$PORT"; do
+  read -r city ip expected <<<"$target"
+  echo "== outside port scan of $city ($ip)"
+  if [[ $city == Frankfurt ]]; then
+    res=$(timeout 120 ssh -o BatchMode=yes chicago "$(declare -f probe_ports); SCAN_PORTS='$SCAN_PORTS'; probe_ports $ip" 2>/dev/null)
+  else
+    res=$(probe_ports "$ip")
+  fi
+  echo "$res" | tr '\n' ' '; echo
+  if [[ -z "$res" ]]; then
+    note "could not scan $city from outside"
+  else
+    unexpected=$(grep '^open:' <<<"$res" | grep -vE "^open:($expected)$" | tr '\n' ' ')
+    [[ -z "$unexpected" ]] || note "unexpected open ports on $city seen from outside: $unexpected"
+    grep -q "^open:$PORT$" <<<"$res" || note "the exit port $PORT on $city is not reachable from outside"
+  fi
+done
+
+# the disguised link's edges are public: their npm dependencies count too
+echo "== disguised-link edges (npm audit)"
+for city in Frankfurt Chicago; do
+  cmd='cd ~/sites/kestrel-edge && npm audit --omit=dev --json'
+  if [[ $city == Frankfurt ]]; then out=$(bash -c "$cmd" 2>/dev/null); else out=$(timeout 120 ssh -o BatchMode=yes chicago "$cmd" 2>/dev/null); fi
+  n=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["vulnerabilities"]["total"])' <<<"$out" 2>/dev/null || echo "?")
+  echo "  $city: $n"
+  [[ "$n" == "0" ]] || note "the $city edge has ${n} npm advisories (npm audit in ~/sites/kestrel-edge; the source is kestrel/edge)"
+done
 
 echo "== live lockdown test"
 "$K/lockdown-test.sh" --live > "$OUT/lockdown.txt" 2>&1 || note "live lockdown test failed: $(grep FAIL "$OUT/lockdown.txt" | tr '\n' ';')"
