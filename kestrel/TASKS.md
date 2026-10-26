@@ -121,3 +121,11 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 ## Upstream check (2026-10-26, want b0b31e20)
 - [x] Upstream is geph-official/geph5 (remote `upstream`; master 02b7831, 2026-10-18) plus crate ipstack-geph (geph-official/ipstack, 0.3.6 locked = latest). Nothing new. Both exits on 77bb395 (04:46 sync: 42+12+4+34 unit, lockdown 44/44, live 20/20); Frankfurt watch reaches Chicago direct + disguised
 - [x] kestrel-firewall check as root (owner allowed): Chicago ok, Frankfurt ok (note: Syncthing *:22000 listens on Frankfurt, behind the default reject). Chicago watch reaches Frankfurt direct 669 ms + disguised 1165 ms
+
+## Weekly security review (2026-10-26, want ee4e5c22)
+- [x] Checked: live lockdown on Frankfurt 20/20; ports of both exits from the other (only 22, 443, and Magpie's 22000 on Frankfurt, which is open to the internet, not "behind the default reject" as the firewall check's note says); exit units (kestrel user, NoNewPrivileges, ProtectSystem=strict, CAP_NET_BIND_SERVICE only); secrets (signing.key 640 kestrel, exit.yaml root:kestrel 640, Sparkle/ci-dev/developer-id 700 under 750 homes); cargo audit + OSV new=0; 7 days of exit logs (only lockdown-probe, ci-ios, macbook until 10-19; every refusal from loopback tests; scanners blocked); devices.json (macbook revoked; no stranger)
+- [x] An enrolled device can reach the exit's own public address (sshd, Magpie 22000) through the exit: hairpins through Oracle's gateway, so it is the same as from the internet, not a loopback bypass. No change
+- [x] Fixed: both public edges ran ws 8.18.3 (GHSA-58qx-3vcg-4xpx, GHSA-96hv-2xvq-fx4p); now 8.22.0 (d4c705f), relaunched on both (owner allowed). Watch both ways after: Chicago->Frankfurt disguised 1515 ms, Frankfurt->Chicago 1198 ms; 404 off the secret path on both
+- [x] Fixed: Apple CI failed since the disguise went live (EngineTests compared exits with their disguise URL); the failure message printed both edges' secret paths into public logs of runs 40169984305 and 40271880608. Test compares without it (165d8e0); goes out with tonight's sync push. Not run here (needs Xcode): check the next apple run
+- [x] Review now scans both exits and npm-audits both edges (d4a6ba2); on today's edges before the fix it raised both, as it should
+- [ ] Owner's call: rotate both edge paths and delete the two runs' logs
