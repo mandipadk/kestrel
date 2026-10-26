@@ -67,7 +67,12 @@ final class EngineTests: XCTestCase {
         let cities = EngineFixture.exits.map(\.city)
         if cities.count > 1 {
             XCTAssertTrue(cities.contains(parsed.exitCity), "on \(parsed.exitCity), not one of \(cities)")
-            XCTAssertEqual(Set(parsed.exits), Set(EngineFixture.exits), "the exit should tell the device every exit")
+            // compared without the disguised addresses: kestrel/exits.json leaves them out, and
+            // their secret paths must not reach this public repo's CI log in a failure message
+            let told = parsed.exits.map { KestrelExit(c: $0.c, e: $0.e, k: $0.k) }
+            XCTAssertEqual(Set(told), Set(EngineFixture.exits), "the exit should tell the device every exit")
+            XCTAssertTrue(parsed.exits.allSatisfy { $0.d == nil || $0.d!.hasPrefix("wss://") },
+                          "a disguised address should be a wss:// URL")
         } else {
             XCTAssertEqual(parsed.exitCity, "Frankfurt")
         }
