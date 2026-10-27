@@ -129,7 +129,9 @@ pub fn valid_domain(domain: &str) -> Option<String> {
         && d.len() <= 253
         && d.contains('.')
         && d.split('.').all(|l| {
-            !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            !l.is_empty()
+                && l.len() <= 63
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         });
     ok.then_some(d)
 }
@@ -235,12 +237,23 @@ fn load_device_allow(dir: &Path) {
 
 /// This device's own allowed domains.
 fn device_allowed(device: &str) -> Vec<String> {
-    DEVICE_ALLOW.read().unwrap().get(device).cloned().unwrap_or_default()
+    DEVICE_ALLOW
+        .read()
+        .unwrap()
+        .get(device)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The domains allowed for every device.
 fn allowed_everywhere() -> Vec<String> {
-    let mut v: Vec<String> = LISTS.read().unwrap().allow.iter().map(|d| d.to_string()).collect();
+    let mut v: Vec<String> = LISTS
+        .read()
+        .unwrap()
+        .allow
+        .iter()
+        .map(|d| d.to_string())
+        .collect();
     v.sort();
     v
 }
@@ -709,7 +722,9 @@ mod tests {
         dns_reply("t-recent", &query("example.org"));
         let r = summary("t-recent").recent;
         assert_eq!(
-            r.iter().map(|r| (r.domain.as_str(), r.count)).collect::<Vec<_>>(),
+            r.iter()
+                .map(|r| (r.domain.as_str(), r.count))
+                .collect::<Vec<_>>(),
             [("a.doubleclick.net", 2), ("b.doubleclick.net", 1)]
         );
         // one device never sees another's
@@ -737,7 +752,12 @@ mod tests {
         assert!(dns_reply("t-allow-a", &query("stats.doubleclick.net")).is_some());
         assert!(dns_reply("t-allow-b", &query("ads.doubleclick.net")).is_some());
         // allowing takes it off the just-blocked list
-        assert!(!summary("t-allow-a").recent.iter().any(|r| r.domain == "ads.doubleclick.net"));
+        assert!(
+            !summary("t-allow-a")
+                .recent
+                .iter()
+                .any(|r| r.domain == "ads.doubleclick.net")
+        );
         assert_eq!(summary("t-allow-a").allowed, ["ads.doubleclick.net"]);
         unallow("t-allow-a", "ads.doubleclick.net");
         assert!(dns_reply("t-allow-a", &query("ads.doubleclick.net")).is_some());
@@ -754,15 +774,30 @@ mod tests {
         assert!(!before);
         allow("t-every-a", "everywhere.example", true);
         assert!(LISTS.read().unwrap().allow.contains("everywhere.example"));
-        assert!(summary("t-every-b").allowed_everywhere.contains(&"everywhere.example".to_string()));
+        assert!(
+            summary("t-every-b")
+                .allowed_everywhere
+                .contains(&"everywhere.example".to_string())
+        );
         unallow("t-every-a", "everywhere.example");
         assert!(!LISTS.read().unwrap().allow.contains("everywhere.example"));
     }
 
     #[test]
     fn only_domain_names_can_be_allowed() {
-        assert_eq!(valid_domain(" Example.COM. ").as_deref(), Some("example.com"));
-        for bad in ["", "localhost", "a..b", "x.com/evil", "x.com\nevil.com", "-", "a_b.com"] {
+        assert_eq!(
+            valid_domain(" Example.COM. ").as_deref(),
+            Some("example.com")
+        );
+        for bad in [
+            "",
+            "localhost",
+            "a..b",
+            "x.com/evil",
+            "x.com\nevil.com",
+            "-",
+            "a_b.com",
+        ] {
             assert!(valid_domain(bad).is_none(), "{bad:?} was accepted");
         }
     }

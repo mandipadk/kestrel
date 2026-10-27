@@ -225,29 +225,31 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     let device = if private {
         match crate::kestrel::authorize(&client_hello) {
             Ok(device) => {
-                crate::kestrel::note_connection(
-                    &device,
-                    remote_ip,
-                    client.protocol() == "sosistab3",
-                    matches!(
+                let link = crate::kestrel::Link {
+                    stealth: client.protocol() == "sosistab3",
+                    quantum_safe: matches!(
                         client_hello.crypt_hello,
                         ClientCryptHello::X25519MlKem768(..)
                     ),
+                };
+                crate::kestrel::note_connection(
+                    &device,
+                    remote_ip,
+                    link.stealth,
+                    link.quantum_safe,
                 );
-                Some(device)
+                Some((device, link))
             }
             Err(err) => {
-                if let Some(name) = crate::kestrel::revoked_key_user(&client_hello) {
-                    crate::kestrel::alert_revoked_key(name, remote_ip);
-                }
                 tracing::warn!(
                     ip = debug(remote_ip),
                     err = display(&err),
                     "rejected a connection without a valid device key"
                 );
-                if let Some(ip) = remote_ip {
-                    crate::kestrel::record_failure(ip);
-                }
+                crate::kestrel::refused_handshake(
+                    crate::kestrel::revoked_key_user(&client_hello),
+                    remote_ip,
+                );
                 return Err(err);
             }
         }
@@ -301,7 +303,7 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
         is_free = level == AccountLevel::Free;
         session_key = SessionKey::new(&(level, token));
         get_ratelimiter(level, token, session_key).await
-    } else if let Some(device) = &device {
+    } else if let Some((device, _)) = &device {
         session_key = SessionKey::new(&("kestrel", &device.name));
         tracing::info!(device = display(&device.name), "device connected");
         crate::kestrel::device_ratelimiter(device, session_key).await
@@ -316,7 +318,7 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
     write_prepend_length(&exit_hello.stdcode(), &mut client).await?;
 
     let client = match &device {
-        Some(device) => EitherPipe::Left(crate::kestrel::UsagePipe::new(client, device)),
+        Some((device, _)) => EitherPipe::Left(crate::kestrel::UsagePipe::new(client, device)),
         None => EitherPipe::Right(client),
     };
     let client = if let Some((read_key, write_key)) = keys {
@@ -344,7 +346,9 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
             && let Ok(new_sess_metadata) = serde_json::from_str::<serde_json::Value>(&metadata)
         {
             sess_metadata = Some(Arc::new(match &device {
-                Some(device) => crate::kestrel::tag_metadata(Some(new_sess_metadata), device),
+                Some((device, link)) => {
+                    crate::kestrel::tag_metadata(Some(new_sess_metadata), device, *link)
+                }
                 None => new_sess_metadata,
             }));
             continue;
@@ -371,7 +375,7 @@ async fn handle_client(mut client: impl Pipe) -> anyhow::Result<()> {
 
         let sess_metadata = sess_metadata.clone().unwrap_or_else(|| {
             Arc::new(match &device {
-                Some(device) => crate::kestrel::tag_metadata(None, device),
+                Some((device, link)) => crate::kestrel::tag_metadata(None, device, *link),
                 None => serde_json::Value::Null,
             })
         });
