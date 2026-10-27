@@ -20,3 +20,6 @@ RUSTSEC-2024-0449 unsafe-libyaml 0.2 unmaintained, no known vulnerability; reads
 # Looked at 2026-10-25: the 0.103 / 1.0 lines (exit and the apps' engine, for the disguised link and the Shield list download) moved to 0.103.16 / 1.0.11; the old lines below are broker only (cargo tree -p geph5-client/-exit finds neither)
 RUSTSEC-2026-0382 rustls-webpki 0.101 only via sqlx-core's Postgres TLS in upstream's geph5-broker (as RUSTSEC-2026-0098)
 RUSTSEC-2026-0381 webpki-roots 0.25 only via sqlx-core in upstream's geph5-broker; not built into the exit, the engine or kestrelctl
+GHSA-qwgh-2vcv-g2f7 block-buffer 0.10 fixed only in 0.12.1, which digest 0.10 (sha2/blake2/hmac) cannot use; the bug needs a panic that is caught and the hasher reused, and every Kestrel build has panic = "abort" (rechecked 2026-10-27)
+GHSA-qwgh-2vcv-g2f7 block-buffer 0.9 as above (via sha2 0.9 in upstream's melpow/tmelcrypt); panic = "abort"
+GHSA-h2v8-394m-p7vv rustls 0.21 Brotli certificate decompression; rustls 0.21 has no certificate compression at all (added in 0.23). The rustls our exit and apps use is 0.23.46, the fixed version; 0.21 comes in only via sqlx-core (rechecked 2026-10-27)
