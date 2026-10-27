@@ -131,3 +131,9 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] OWNER chose rotate + delete logs. New edge paths on both (18:05 via edge-enable.sh); old paths 404, new ones upgrade; exits.json on both carry them; watch both ways passes (Frankfurt->Chicago disguised 1131 ms, Chicago->Frankfurt 1211 ms). Logs of runs 40169984305/40271880608 deleted (API 404). Their error annotations still show the old, now dead, paths; removing them means deleting the runs (not done: not what was approved)
 - [x] kestrel-firewall check as root after the edge update: ok on both; both edges npm audit 0
 - [ ] /var/lib/kestrel/exits.json.old on Chicago (holds the old, dead paths) left: this session had no kestrel group there
+
+## 2026-10-27 rollback and revoked-key alert
+- [x] 04:49 update rolled back: the live check "the exit tells classical sessions apart" raced. The report gave the device's latest connection, and the probe holds three sessions at once. Fixed: each session's report gives its own link (e31d725; unit test a_report_speaks_for_the_session_asking; throwaway lockdown 44/44).
+- [x] Revoked "macbook" (the old command-line client) is still running on the owner's Mac and retrying from their campus network (AS16430, same as iphone/macbook-test). Its refusals had that address blocked for 15 min at a time, locking out their real devices. Fixed: a revoked key of the owner's is refused and alerted (once an hour) but never blocks its address (unit test an_owners_revoked_key_never_blocks_its_address).
+- [ ] e31d725 not deployed by hand (session safety check refused; power run timed out). The 2026-10-28 04:38 UTC nightly deploys it with live tests and rollback. Confirm afterwards that /opt/kestrel/current is e31d725...
+- [ ] Owner: remove the old command-line Kestrel from the Mac (the menu bar app replaces it).
