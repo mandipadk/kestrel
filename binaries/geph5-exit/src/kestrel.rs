@@ -76,17 +76,54 @@ pub const METADATA_KEY: &str = "kestrel_device";
 
 /// Tags a session's metadata with its device. Set by the exit, never trusted
 /// from the client: any value the client sent under the key is replaced.
-pub fn tag_metadata(metadata: Option<serde_json::Value>, device: &Device) -> serde_json::Value {
+pub fn tag_metadata(
+    metadata: Option<serde_json::Value>,
+    device: &Device,
+    link: Link,
+) -> serde_json::Value {
     let mut map = match metadata {
         Some(serde_json::Value::Object(map)) => map,
         _ => serde_json::Map::new(),
     };
     map.insert(METADATA_KEY.into(), device.name.clone().into());
+    map.insert(
+        LINK_KEY.into(),
+        serde_json::json!({ "stealth": link.stealth, "quantum_safe": link.quantum_safe }),
+    );
     serde_json::Value::Object(map)
 }
 
 pub fn device_of(metadata: &serde_json::Value) -> Option<&str> {
     metadata.get(METADATA_KEY).and_then(|v| v.as_str())
+}
+
+/// The key under which the exit records how a session came in.
+const LINK_KEY: &str = "kestrel_link";
+
+/// How one session reached the exit. A device can hold several sessions at
+/// once (an old app and a new one, or a test's probes), so its report speaks
+/// for the session asking rather than for whichever connected last.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Link {
+    pub stealth: bool,
+    pub quantum_safe: bool,
+}
+
+/// The asking session's own link, or, for a session from before links were
+/// recorded, the device's latest.
+fn reported_link(session: Option<Link>, usage: Option<&Usage>) -> Link {
+    session.unwrap_or_else(|| Link {
+        stealth: usage.is_some_and(|u| u.stealth.load(Ordering::Relaxed)),
+        quantum_safe: usage.is_some_and(|u| u.quantum_safe.load(Ordering::Relaxed)),
+    })
+}
+
+pub fn link_of(metadata: &serde_json::Value) -> Option<Link> {
+    let link = metadata.get(LINK_KEY)?;
+    Some(Link {
+        stealth: link.get("stealth")?.as_bool()?,
+        quantum_safe: link.get("quantum_safe")?.as_bool()?,
+    })
 }
 
 /// Names a device can open through its own tunnel to talk to the exit
@@ -102,7 +139,7 @@ const INTERNAL_PORT: &str = "1";
 
 /// Answers a request to one of the exit's internal names, or None if the
 /// destination is an ordinary one.
-pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
+pub fn internal_request(device: &str, link: Option<Link>, dest: &str) -> Option<Vec<u8>> {
     let (host, port) = dest.rsplit_once(':').unwrap_or((dest, ""));
     let what = host
         .to_ascii_lowercase()
@@ -114,7 +151,7 @@ pub fn internal_request(device: &str, dest: &str) -> Option<Vec<u8>> {
     if !apply_request(device, &what) {
         return Some(br#"{"error":"unknown request"}"#.to_vec());
     }
-    Some(device_report(device))
+    Some(device_report(device, link))
 }
 
 /// Carries out a device's request to its exit. False if it isn't one.
@@ -151,18 +188,19 @@ fn known_exits() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!([]))
 }
 
-/// What a device may learn about itself.
-fn device_report(device: &str) -> Vec<u8> {
+/// What a device may learn about itself; `link` is the asking session's own.
+fn device_report(device: &str, link: Option<Link>) -> Vec<u8> {
     let usage = USAGE.get(device).map(|u| u.clone());
     let (asn, country) = usage
         .as_ref()
         .and_then(|u| u.network.lock().unwrap().clone())
         .unwrap_or_default();
+    let link = reported_link(link, usage.as_deref());
     let cfg = CONFIG_FILE.wait();
     serde_json::to_vec(&serde_json::json!({
         "device": device,
-        "stealth": usage.as_ref().is_some_and(|u| u.stealth.load(Ordering::Relaxed)),
-        "quantum_safe": usage.as_ref().is_some_and(|u| u.quantum_safe.load(Ordering::Relaxed)),
+        "stealth": link.stealth,
+        "quantum_safe": link.quantum_safe,
         "asn": asn,
         "country": country,
         "exit": { "country": cfg.country.alpha2(), "city": cfg.city },
@@ -205,6 +243,25 @@ pub fn hung_up(err: &std::io::Error) -> bool {
             | std::io::ErrorKind::ConnectionAborted
             | std::io::ErrorKind::BrokenPipe
     )
+}
+
+/// After a handshake was refused for its key. A key the owner revoked (an old
+/// device still running somewhere, or a lost one) is reported, but doesn't
+/// count against its address: that address is usually the owner's own
+/// network, and blocking it would lock their current devices out too. It is
+/// still refused every time.
+pub fn refused_handshake(revoked_device: Option<String>, ip: Option<IpAddr>) {
+    match revoked_device {
+        Some(name) => {
+            count_rejection();
+            alert_revoked_key(name, ip);
+        }
+        None => {
+            if let Some(ip) = ip {
+                record_failure(ip);
+            }
+        }
+    }
 }
 
 pub fn record_failure(ip: IpAddr) {
@@ -641,10 +698,60 @@ mod tests {
             "SHIELD-PAUSE.kestrel.internal:443",
             "shield-pause.kestrel.internal",
         ] {
-            let body = internal_request("t-port", dest).expect("an internal name");
+            let body = internal_request("t-port", None, dest).expect("an internal name");
             assert_eq!(body, br#"{"error":"unknown request"}"#, "{dest}");
         }
         assert_eq!(shield::summary("t-port").paused_until, 0);
-        assert!(internal_request("t-port", "example.com:1").is_none());
+        assert!(internal_request("t-port", None, "example.com:1").is_none());
+    }
+
+    #[test]
+    fn a_report_speaks_for_the_session_asking() {
+        let device = Device {
+            name: "t-link".into(),
+        };
+        // the device's latest connection was quantum-safe and stealthy...
+        note_connection(&device, None, true, true);
+        let usage = usage_for("t-link");
+        // ...but this older session came in classical over the plain link
+        let classical = Link {
+            stealth: false,
+            quantum_safe: false,
+        };
+        let meta = tag_metadata(None, &device, classical);
+        assert_eq!(link_of(&meta), Some(classical));
+        assert_eq!(reported_link(link_of(&meta), Some(&usage)), classical);
+        // a session with no recorded link still gets the device's latest
+        let latest = Link {
+            stealth: true,
+            quantum_safe: true,
+        };
+        assert_eq!(
+            reported_link(link_of(&serde_json::json!({})), Some(&usage)),
+            latest
+        );
+        // a client can't claim a link: the exit's value replaces whatever it sent
+        let sent = serde_json::json!({ "kestrel_link": { "stealth": true, "quantum_safe": true } });
+        assert_eq!(
+            link_of(&tag_metadata(Some(sent), &device, classical)),
+            Some(classical)
+        );
+    }
+
+    #[test]
+    fn an_owners_revoked_key_never_blocks_its_address() {
+        let ip: IpAddr = "203.0.113.77".parse().unwrap();
+        for _ in 0..3 * MAX_FAILURES {
+            refused_handshake(Some("t-old-laptop".into()), Some(ip));
+        }
+        assert!(
+            !is_banned(ip),
+            "an old device of the owner's locked out its network"
+        );
+        let stranger: IpAddr = "203.0.113.78".parse().unwrap();
+        for _ in 0..MAX_FAILURES {
+            refused_handshake(None, Some(stranger));
+        }
+        assert!(is_banned(stranger), "a stranger was not blocked");
     }
 }

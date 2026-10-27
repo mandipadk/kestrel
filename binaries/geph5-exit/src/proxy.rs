@@ -81,7 +81,11 @@ async fn open_tunnel(
     let filter: FilterOptions =
         serde_json::from_value(sess_metadata["filter"].clone()).unwrap_or_default();
     if let Some(device) = crate::kestrel::device_of(sess_metadata)
-        && let Some(body) = crate::kestrel::internal_request(device, &dest_host)
+        && let Some(body) = crate::kestrel::internal_request(
+            device,
+            crate::kestrel::link_of(sess_metadata),
+            &dest_host,
+        )
     {
         if is_rich {
             let resp = RichTunnelResponse::Success {
