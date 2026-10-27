@@ -135,6 +135,6 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 ## 2026-10-27 rollback and revoked-key alert
 - [x] 04:49 update rolled back: the live check "the exit tells classical sessions apart" raced. The report gave the device's latest connection, and the probe holds three sessions at once. Fixed: each session's report gives its own link (e31d725; unit test a_report_speaks_for_the_session_asking; throwaway lockdown 44/44).
 - [x] Revoked "macbook" (the old command-line client) is still running on the owner's Mac and retrying from their campus network (AS16430, same as iphone/macbook-test). Its refusals had that address blocked for 15 min at a time, locking out their real devices. Fixed: a revoked key of the owner's is refused and alerted (once an hour) but never blocks its address (unit test an_owners_revoked_key_never_blocks_its_address).
-- [ ] e31d725 not deployed by hand (session safety check refused; power run timed out). The 2026-10-28 04:38 UTC nightly deploys it with live tests and rollback. Confirm afterwards that /opt/kestrel/current is e31d725...
+- [x] e31d725 deployed 2026-10-27 21:57 UTC as 7931ce9 (owner approved); live lockdown 20/20, then 6 more live runs 20/20 each.
 - [ ] Owner: remove the old command-line Kestrel from the Mac (the menu bar app replaces it).
 - [x] Revoked-key alerts reach the owner/agent at most once a day per device (status page server on Chicago, ~/sites/kestrel/alerts.mjs, test alerts.test.mjs 3/3). Way back: ~/sites/kestrel/server.mjs.before-alert-daily, then relaunch.
