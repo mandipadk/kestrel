@@ -123,7 +123,10 @@ if [[ $MODE == sync ]]; then
     step "rebase our commits on upstream"
     if ! git rebase upstream/master > "$REPORTS/rebase-$STAMP.log" 2>&1; then
       cat "$REPORTS/rebase-$STAMP.log"
-      if ! claude_fix "rebasing the kestrel branch onto upstream/master hit conflicts" "$REPORTS/rebase-$STAMP.log"; then
+      # Cargo.lock conflicts are settled mechanically (upstream's lock, our newer
+      # versions lifted back, nothing downgraded); Claude only sees other files
+      if ! "$K/lock-merge.sh" \
+         && ! { claude_fix "rebasing the kestrel branch onto upstream/master hit conflicts" "$REPORTS/rebase-$STAMP.log" && "$K/lock-merge.sh"; }; then
         git rebase --abort 2>/dev/null; git reset -q --hard "$GOOD_HEAD"
         fail "our changes conflict with upstream and could not be merged automatically"
       fi

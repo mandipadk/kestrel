@@ -138,3 +138,6 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] e31d725 deployed 2026-10-27 21:57 UTC as 7931ce9 (owner approved); live lockdown 20/20, then 6 more live runs 20/20 each.
 - [ ] Owner: remove the old command-line Kestrel from the Mac (the menu bar app replaces it).
 - [x] Revoked-key alerts reach the owner/agent at most once a day per device (status page server on Chicago, ~/sites/kestrel/alerts.mjs, test alerts.test.mjs 3/3). Way back: ~/sites/kestrel/server.mjs.before-alert-daily, then relaunch.
+
+## 2026-11-02: nightly update stuck on Cargo.lock
+- [x] Nov 1 and Nov 2 updates stopped: our security-bump commits and upstream changed the same Cargo.lock lines, and Claude may not edit Cargo.lock (by design). New kestrel/lock-merge.sh settles lock-only conflicts mechanically: upstream lock, cargo re-lock, our newer versions lifted back (lock-lift.py), never a downgrade; empty bump commits dropped. sync.sh runs it before Claude. Test: kestrel/lock-merge-test.sh (throwaway clone; PASS on upstream c07b6ef)
