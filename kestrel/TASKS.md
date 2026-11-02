@@ -141,3 +141,15 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 
 ## 2026-11-02: nightly update stuck on Cargo.lock
 - [x] Nov 1 and Nov 2 updates stopped: our security-bump commits and upstream changed the same Cargo.lock lines, and Claude may not edit Cargo.lock (by design). New kestrel/lock-merge.sh settles lock-only conflicts mechanically: upstream lock, cargo re-lock, our newer versions lifted back (lock-lift.py), never a downgrade; empty bump commits dropped. sync.sh runs it before Claude. Test: kestrel/lock-merge-test.sh (throwaway clone; PASS on upstream c07b6ef)
+
+## Weekly security review (2026-11-02, want f9046a8f)
+- [x] Advisories: cargo audit + OSV triage new=0 (17 accepted, unchanged); spin 0.9.8 is yanked only (no advisory; upstream sqlx/flume); both edges npm audit 0
+- [x] Ports: full TCP scan (1-65535) of each exit from the other: Frankfurt 22, 443, 22000 (Magpie); Chicago 22, 443. No public IPv6 on either
+- [x] Live lockdown Frankfurt 20/20 (by hand); Chicago 20/20 (follow, 05:42 today, same release 2e44a92); kestrel-watch passing both ways
+- [x] Units: geph-exit as kestrel, NoNewPrivileges, ProtectSystem=strict, ProtectHome, CAP_NET_BIND_SERVICE only (Chicago; Frankfurt same unit). Sparkle, Developer ID, ci-dev, ASC keys 600/700 under a 750 home; Frankfurt signing.key 640 kestrel, exit.yaml root:kestrel 640
+- [x] Logs, 7 days: real devices connected none (iphone last Oct 18, macbook-test Oct 19); only lockdown-probe and ci-ios. ~19k refusals on Frankfurt are the revoked old "macbook" CLI (campus AS16430 and T-Mobile); no bans of the owner's networks since the Oct 27 fix; other refusals are scanners and loopback tests. Devices: no new or unknown names
+- [x] Code: our bd5fc76 and upstream 02b7831..c07b6ef (UDP DNS opt-in and off; b2e changes unreachable in private mode, b2e not bound; client cache import APIs unused). Nothing exploitable found
+- [x] Automated review's Claude step failed 2026-11-01 ("organization has disabled Claude subscription access"); claude -p works on Frankfurt today: one-off
+- [x] Fixed (46fe8e3, 09101a8): kestrel-firewall check said other listeners were "behind the default reject" while Magpie's 22000 is open; now follows jumped chains and says which are open (kestrel/firewall-test.sh 15/15, in the sync gate; control: old script fails 3). Weekly scan also probes every port each exit listens on, in parallel (11 s). Removed upstream's TelegramNotifier workflow (any stranger's issue would run an unpinned third-party action; no runs so far)
+- [ ] Deploy: my session may not run sync.sh --deploy-only; the 04:43 sync on 2026-11-03 deploys and pushes, Chicago follows 05:41
+- [ ] Suggest to owner: public edge (kestrel-edge, Node) runs as ubuntu and could read the signing keys if compromised; a systemd sandbox or own user would close that
