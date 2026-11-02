@@ -71,11 +71,14 @@ check() {
   # Other public listeners (another project's, say): tell truthfully whether
   # an inbound rule lets the internet reach them or the default reject does not.
   local input proto addr open="" closed=""
-  input=$($IPT -S INPUT)
+  input=$($IPT -S)
+  local -A seen=()
   while read -r proto addr; do
     [[ -n $proto ]] || continue
     local p=${addr##*:}
     [[ $proto == tcp && ( $p == 22 || $p == "$PORT" ) ]] && continue
+    [[ -z ${seen[$proto/$p]:-} ]] || continue
+    seen[$proto/$p]=1
     if accepts "$input" "$proto" "$p"; then open+=" $proto/$p"; else closed+=" $proto/$p"; fi
   done < <(public_listeners)
   [[ -z "$open" ]] || echo "note: also open to the internet:$open"
@@ -91,26 +94,33 @@ public_listeners() {
     | grep -vE ' (127\.|\[::1\]|\[::ffff:127\.)|%' | sort -u -k1,1 -k2,2
 }
 
-# accepts <iptables -S INPUT> <proto> <port>: true if an ACCEPT rule for
-# anyone (no interface, source or connection-state limit) covers the port
+# accepts <iptables -S> <proto> <port> [chain]: true if the internet can open
+# a connection to the port: an ACCEPT for anyone (no interface, source or
+# established-only limit) covers it, here or in a chain this one jumps to
 accepts() {
-  local rule
+  local rules=$1 chain=${4:-INPUT} depth=${5:-0} rule target
+  (( depth <= 5 )) || return 1
   while read -r rule; do
-    [[ $rule == "-A INPUT "*"-j ACCEPT"* ]] || continue
+    [[ $rule == "-A $chain "* && $rule =~ -j\ ([^ ]+) ]] || continue
+    target=${BASH_REMATCH[1]}
+    [[ $target == ACCEPT ]] || grep -qxF -- "-N $target" <<<"$rules" || continue
     [[ $rule =~ (^|\ )(-i|-s)\  ]] && continue
     # a state match lets the internet in only if it takes new connections
     [[ $rule =~ --(ct)?state\ ([A-Z,]+) ]] && [[ ,${BASH_REMATCH[2]}, != *,NEW,* ]] && continue
     [[ $rule =~ -p\ ([a-z]+) ]] && [[ ${BASH_REMATCH[1]} != "$2" && ${BASH_REMATCH[1]} != all ]] && continue
     if [[ $rule =~ --dports?\ ([0-9,:]+) ]]; then
-      local part lo hi
+      local part lo hi hit=0
       for part in ${BASH_REMATCH[1]//,/ }; do
         lo=${part%%:*}; hi=${part##*:}
-        (( $3 >= lo && $3 <= hi )) && return 0
+        (( $3 >= lo && $3 <= hi )) && hit=1
       done
-    elif [[ $rule != *--sport* ]]; then
-      return 0 # no port named: the whole protocol is open
+      (( hit )) || continue
+    elif [[ $rule == *--sport* ]]; then
+      continue # a source port: replies to this host, not a service
     fi
-  done <<<"$1"
+    [[ $target == ACCEPT ]] && return 0
+    accepts "$rules" "$2" "$3" "$target" $((depth + 1)) && return 0
+  done <<<"$rules"
   return 1
 }
 
