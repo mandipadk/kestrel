@@ -68,15 +68,56 @@ check() {
   $IPT -C INPUT -j REJECT --reject-with icmp-host-prohibited 2>/dev/null || { echo "missing: default inbound reject"; fail=1; }
   $IP6T -C INPUT -p tcp --dport "$PORT" -j REJECT 2>/dev/null || { echo "missing: ipv6 reject"; fail=1; }
   $IP6T -C OUTPUT -m owner --uid-owner "$USER_NAME" -d ::1/128 -m conntrack --ctstate NEW -j REJECT 2>/dev/null || { echo "missing: ipv6 loopback reject"; fail=1; }
-  local listeners
-  listeners=$(ss -Htln | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127)' | grep -vE ":(22|111|$PORT)$" || true)
-  [[ -z "$listeners" ]] || echo "note: other public listeners (behind the default reject): $listeners"
+  # Other public listeners (another project's, say): tell truthfully whether
+  # an inbound rule lets the internet reach them or the default reject does not.
+  local input proto addr open="" closed=""
+  input=$($IPT -S INPUT)
+  while read -r proto addr; do
+    [[ -n $proto ]] || continue
+    local p=${addr##*:}
+    [[ $proto == tcp && ( $p == 22 || $p == "$PORT" ) ]] && continue
+    if accepts "$input" "$proto" "$p"; then open+=" $proto/$p"; else closed+=" $proto/$p"; fi
+  done < <(public_listeners)
+  [[ -z "$open" ]] || echo "note: also open to the internet:$open"
+  [[ -z "$closed" ]] || echo "note: other public listeners, closed by the default reject:$closed"
   if [[ $fail == 0 ]]; then echo "kestrel firewall: ok"; fi
   return $fail
+}
+
+# "tcp <addr:port>" / "udp <addr:port>" for every socket listening beyond this
+# host (not loopback, not bound to one interface like the DHCP client)
+public_listeners() {
+  { ss -Htln | awk '{print "tcp", $4}'; ss -Huln | awk '{print "udp", $4}'; } \
+    | grep -vE ' (127\.|\[::1\]|\[::ffff:127\.)|%' | sort -u -k1,1 -k2,2
+}
+
+# accepts <iptables -S INPUT> <proto> <port>: true if an ACCEPT rule for
+# anyone (no interface, source or connection-state limit) covers the port
+accepts() {
+  local rule
+  while read -r rule; do
+    [[ $rule == "-A INPUT "*"-j ACCEPT"* ]] || continue
+    [[ $rule =~ (^|\ )(-i|-s)\  ]] && continue
+    # a state match lets the internet in only if it takes new connections
+    [[ $rule =~ --(ct)?state\ ([A-Z,]+) ]] && [[ ,${BASH_REMATCH[2]}, != *,NEW,* ]] && continue
+    [[ $rule =~ -p\ ([a-z]+) ]] && [[ ${BASH_REMATCH[1]} != "$2" && ${BASH_REMATCH[1]} != all ]] && continue
+    if [[ $rule =~ --dports?\ ([0-9,:]+) ]]; then
+      local part lo hi
+      for part in ${BASH_REMATCH[1]//,/ }; do
+        lo=${part%%:*}; hi=${part##*:}
+        (( $3 >= lo && $3 <= hi )) && return 0
+      done
+    elif [[ $rule != *--sport* ]]; then
+      return 0 # no port named: the whole protocol is open
+    fi
+  done <<<"$1"
+  return 1
 }
 
 case "${1:-}" in
   apply) apply ;;
   check) check ;;
+  # for the test only: accepts with given rules (no root, changes nothing)
+  accepts-test) accepts "$(cat)" "$2" "$3" ;;
   *) echo "usage: kestrel-firewall apply|check" >&2; exit 2 ;;
 esac

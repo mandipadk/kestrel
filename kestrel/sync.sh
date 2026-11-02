@@ -87,6 +87,7 @@ build_and_test() {
   cargo test --release -j2 -p geph5-client --lib >> "$REPORTS/test-$STAMP.log" 2>&1 \
     || { grep -E "FAILED|panicked|error" "$REPORTS/test-$STAMP.log" | head -30; return 1; }
   grep "test result" "$REPORTS/test-$STAMP.log"
+  "$K/firewall-test.sh" || return 1
   step "lockdown test (throwaway exit)"
   "$K/lockdown-test.sh" target/release
 }

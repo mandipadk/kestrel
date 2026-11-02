@@ -56,18 +56,29 @@ cat "$OUT/firewall.txt"
 # its own project).
 CHICAGO_IP=${KESTREL_CHICAGO_IP:-64.181.219.94}
 SCAN_PORTS="22 80 111 443 1080 2049 3128 7681 8080 8385 9909 9910 22000 28443"
-probe_ports() { # probe_ports <ip> -> open:<port>/closed:<port> lines
-  for p in $SCAN_PORTS; do
-    if timeout 4 bash -c "</dev/tcp/$1/$p" 2>/dev/null; then echo "open:$p"; else echo "closed:$p"; fi
+probe_ports() { # probe_ports <ip> <ports...> -> open:<port>/closed:<port> lines, at once
+  local ip=$1 p; shift
+  for p in "$@"; do
+    ( if timeout 4 bash -c "</dev/tcp/$ip/$p" 2>/dev/null; then echo "open:$p"; else echo "closed:$p"; fi ) &
   done
+  wait
+}
+# every TCP port the server itself listens on beyond loopback is probed too,
+# so a new service is caught even when it isn't in the list above
+listening_ports() {
+  ss -Htln | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|\[::ffff:127\.)|%' | sed 's/.*://' | sort -un | tr '\n' ' '
 }
 for target in "Frankfurt $PUBLIC_IP 22|$PORT|22000" "Chicago $CHICAGO_IP 22|$PORT"; do
   read -r city ip expected <<<"$target"
   echo "== outside port scan of $city ($ip)"
   if [[ $city == Frankfurt ]]; then
-    res=$(timeout 120 ssh -o BatchMode=yes chicago "$(declare -f probe_ports); SCAN_PORTS='$SCAN_PORTS'; probe_ports $ip" 2>/dev/null)
+    ports=$(echo $SCAN_PORTS $(listening_ports) | tr ' ' '\n' | sort -un | tr '\n' ' ')
+    res=$(timeout 120 ssh -o BatchMode=yes chicago "$(declare -f probe_ports); probe_ports $ip $ports" 2>/dev/null | sort -t: -k2 -n)
   else
-    res=$(probe_ports "$ip")
+    theirs=$(timeout 60 ssh -o BatchMode=yes chicago "$(declare -f listening_ports); listening_ports" 2>/dev/null)
+    [[ -n "$theirs" ]] || note "could not list Chicago's listening ports"
+    ports=$(echo $SCAN_PORTS $theirs | tr ' ' '\n' | sort -un | tr '\n' ' ')
+    res=$(probe_ports "$ip" $ports | sort -t: -k2 -n)
   fi
   echo "$res" | tr '\n' ' '; echo
   if [[ -z "$res" ]]; then
