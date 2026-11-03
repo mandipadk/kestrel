@@ -157,3 +157,5 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 ## 2026-11-03: revoked-key alert (macbook, AS16430)
 - [x] Same as Oct 27: the old command-line client on the owner's Mac still retries with the revoked "macbook" key from campus (131.95.1.131). Refused (2877 tries in 24 h), no address blocked, alert at most once a day. Nothing to fix on the exit
 - [ ] Owner: Kestrel menu bar panel > Remove Old Client (Mac 1.4+ shows it while the old LaunchAgent, ~/.kestrel or its proxies remain). Alerts stop once it is gone
+- [x] Disguised link checked live 2026-11-03: disguise-test.sh 10/10 on Frankfurt (blocked address -> disguised in 5 s, 31 Mbit/s) and Chicago (4 s, 27 Mbit/s); stranger key refused, edges 404 off path; no test client left
+- [x] Chicago ~/code/kestrel was a stale clone (Oct 18, untracked kestrel/edge/node_modules); now on branch kestrel-current tracking frankfurt/kestrel (edge tracked, node_modules ignored). Old state kept on its branch kestrel
