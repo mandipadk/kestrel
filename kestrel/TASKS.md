@@ -151,7 +151,7 @@ Found on the live exits: Chicago has never carried an owner device (learnt exit 
 - [x] Code: our bd5fc76 and upstream 02b7831..c07b6ef (UDP DNS opt-in and off; b2e changes unreachable in private mode, b2e not bound; client cache import APIs unused). Nothing exploitable found
 - [x] Automated review's Claude step failed 2026-11-01 ("organization has disabled Claude subscription access"); claude -p works on Frankfurt today: one-off
 - [x] Fixed (46fe8e3, 09101a8): kestrel-firewall check said other listeners were "behind the default reject" while Magpie's 22000 is open; now follows jumped chains and says which are open (kestrel/firewall-test.sh 15/15, in the sync gate; control: old script fails 3). Weekly scan also probes every port each exit listens on, in parallel (11 s). Removed upstream's TelegramNotifier workflow (any stranger's issue would run an unpinned third-party action; no runs so far)
-- [ ] Deploy: my session may not run sync.sh --deploy-only; the 04:43 sync on 2026-11-03 deploys and pushes, Chicago follows 05:41
+- [x] Deployed by the 2026-11-03 sync as 8a0c8bd (firewall test 15/15, lockdown 44/44, live 20/20), pushed; Chicago followed (live 20/20). Corrected kestrel-firewall installed as root on both (owner allowed): check ok on both; Frankfurt notes 22000 tcp+udp open (Magpie), Chicago only 111 + cloudflared/tailscale UDP closed by the default reject. Watch passing both ways after. Originals kept at /root/kestrel-firewall.prev
 - [ ] Suggest to owner: public edge (kestrel-edge, Node) runs as ubuntu and could read the signing keys if compromised; a systemd sandbox or own user would close that
 
 ## 2026-11-03: revoked-key alert (macbook, AS16430)
